@@ -5,6 +5,8 @@ httpx
 fastapi
 uvicorn
 pycoingecko
+openai
+
 
 
 
