@@ -3,7 +3,6 @@ import datetime
 import logging
 import requests
 import httpx
-import uvicorn
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -16,6 +15,8 @@ from config import (
     CRYPTOPANIC_API_KEY
 )
 from db import add_or_update_user, get_user_profile, get_all_users, remove_user
+
+from uvicorn import Config, Server
 
 OWNER_ID = 6800873578
 
@@ -204,8 +205,6 @@ async def check_expiry(_):
             await telegram_app.bot.send_message(uid, "⚠️ Завтра завершується підписка.")
         if dt < now:
             remove_user(uid)
-
-from uvicorn import Config, Server
 
 async def main():
     telegram_app.add_handler(CommandHandler("start", start))
