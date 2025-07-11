@@ -1,5 +1,3 @@
-# bot.py
-
 import asyncio
 import datetime
 import logging
@@ -22,13 +20,13 @@ from db import add_or_update_user, get_user_profile, get_all_users, remove_user
 
 logging.basicConfig(level=logging.INFO)
 
-# FastAPI instance for webhook
+# FastAPI для вебхука від CryptoBot
 fastapi_app = FastAPI()
 
 # Telegram application
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# Локалізація
+# 🌐 Локалізація
 LANGUAGES = {"uk": "Українська", "ru": "Русский", "en": "English"}
 
 TEXT = {
@@ -60,7 +58,7 @@ def lang(user_id):
 def tr(user_id, key):
     return TEXT[key][lang(user_id)]
 
-# ✅ CryptoBot webhook
+# ✅ Webhook від CryptoBot
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
@@ -81,7 +79,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton(name, callback_data=f"lang:{code}")] for code, name in LANGUAGES.items()]
     await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
 
-# 📦 Обробка callback
+# 📦 Callback обробник
 async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -154,7 +152,7 @@ async def send_news(uid):
     msg = "📰 Останні новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
     await telegram_app.bot.send_message(uid, msg)
 
-# 📌 /myaccess команда
+# /myaccess
 async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await handle_cb(update, ctx)
 
@@ -168,15 +166,18 @@ async def check_expiry(_):
         if dt < now:
             remove_user(uid)
 
-# 🔁 Запуск
-async def main():
+# 🔁 Запуск FastAPI + Telegram в потоках
+def start_fastapi():
+    uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
+
+def start_telegram():
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
     telegram_app.add_handler(CallbackQueryHandler(handle_cb))
     telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
-    print("✅ Bot is polling...")
-    await telegram_app.run_polling()
+    print("✅ Telegram бот запущено")
+    telegram_app.run_polling()
 
 if __name__ == "__main__":
-    threading.Thread(target=lambda: uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)).start()
-    asyncio.run(main())
+    threading.Thread(target=start_fastapi).start()
+    threading.Thread(target=start_telegram).start()
