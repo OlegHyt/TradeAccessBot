@@ -56,6 +56,7 @@ TEXT = {
         "freetrial": {"uk": "🎁 Безкоштовно на 1 годину", "ru": "🎁 Бесплатно на 1 час", "en": "🎁 Free 1-hour trial"},
         "news": {"uk": "📰 Новини", "ru": "📰 Новости", "en": "📰 News"},
         "commands": {"uk": "📌 Команди", "ru": "📌 Команды", "en": "📌 Commands"},
+        "admin_panel": {"uk": "🛠️ Адмін-панель", "ru": "🛠️ Админ-панель", "en": "🛠️ Admin Panel"},
     },
     "commands_list": {
         "uk": "/start — стартове меню\n/myaccess — мій доступ\n/help — команди\n/admin — адмін-панель\n/ask — GPT\n/testask — тест для адміна\n/price — ціни\n/predict — прогноз по монеті\n/broadcast — розсилка (admin)",
@@ -199,13 +200,19 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data.startswith("lang:"):
         code = data.split(":")[1]
         user_lang[uid] = code
-        kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)]
-              for k in ["access", "subscribe", "freetrial", "news", "commands"]]
+        # Формуємо основне меню з кнопками
+        buttons = ["access", "subscribe", "freetrial", "news", "commands"]
+        # Якщо адмін - додаємо кнопку адмін-панелі
+        if uid == OWNER_ID:
+            buttons.append("admin_panel")
+        kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)] for k in buttons]
         await q.edit_message_text(TEXT["main_menu"][code].format(name=q.from_user.first_name), reply_markup=InlineKeyboardMarkup(kb))
+
     elif data == "subscribe":
         code = lang(uid)
         kb = [[InlineKeyboardButton(TARIFFS[k]["labels"][code], callback_data=k)] for k in TARIFFS]
         await q.edit_message_text(TEXT["choose_tariff"][code], reply_markup=InlineKeyboardMarkup(kb))
+
     elif data in TARIFFS:
         t = TARIFFS[data]
         ctx.user_data["tdays"] = t["duration_days"]
@@ -223,6 +230,7 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(f"💳 Оплатіть тут:\n{url}", reply_markup=InlineKeyboardMarkup(kb))
         else:
             await q.edit_message_text("❌ Помилка створення рахунку.")
+
     elif data == "check":
         try:
             m = await ctx.bot.get_chat_member(CHANNEL_CHAT_ID, uid)
@@ -233,9 +241,11 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 raise Exception()
         except:
             await q.edit_message_text(tr(uid, "not_subscribed") + CHANNEL_LINK)
+
     elif data == "freetrial":
-        add_or_update_user(uid, 0.0417)
+        add_or_update_user(uid, 0.0417)  # 1 година ≈ 0.0417 дня
         await q.edit_message_text("✅ Безкоштовний доступ на 1 годину активовано!")
+
     elif data == "access":
         row = get_user_profile(uid)
         if row:
@@ -243,10 +253,30 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(tr(uid, "access_status").format(days=days))
         else:
             await q.edit_message_text(tr(uid, "no_access"))
+
     elif data == "news":
         await send_news(uid)
+
     elif data == "commands":
         await q.edit_message_text(TEXT["commands_list"][lang(uid)])
+
+    elif data == "admin_panel":
+        # Меню адміна з кнопками команд
+        kb = [
+            [InlineKeyboardButton("/admin", callback_data="cmd_admin")],
+            [InlineKeyboardButton("/broadcast", callback_data="cmd_broadcast")],
+            [InlineKeyboardButton("/testask", callback_data="cmd_testask")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data=f"lang:{lang(uid)}")]
+        ]
+        await q.edit_message_text("🛠️ Адмін-панель:", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif data == "cmd_admin":
+        await admin_cmd(update, ctx)
+    elif data == "cmd_broadcast":
+        # Запросити текст для розсилки
+        await q.edit_message_text("📝 Введіть текст для розсилки через команду /broadcast <текст>")
+    elif data == "cmd_testask":
+        await testask_cmd(update, ctx)
 
 async def send_news(uid):
     async with httpx.AsyncClient() as cli:
@@ -265,6 +295,7 @@ async def check_expiry(_):
             remove_user(uid)
 
 from uvicorn import Config, Server
+
 async def main():
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("help", help_cmd))
