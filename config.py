@@ -3,7 +3,7 @@
 import os
 from dotenv import load_dotenv
 
-# 📦 Завантаження змінних середовища
+# 📦 Завантаження змінних середовища з .env
 load_dotenv()
 
 # 🤖 Telegram бот
@@ -20,6 +20,9 @@ OWNER_ID = int(os.getenv("OWNER_ID", "6800873578"))
 
 # 📰 CryptoPanic
 CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY")
+
+# 🤖 GPT-4o (OpenAI API)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # 💸 Тарифи з локалізацією назв
 TARIFFS = {
