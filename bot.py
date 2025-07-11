@@ -7,22 +7,23 @@ import uvicorn
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    ContextTypes
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 )
 from config import (
     BOT_TOKEN, BOT_USERNAME, TARIFFS,
     CRYPTO_PAY_TOKEN, CHANNEL_CHAT_ID, CHANNEL_LINK,
-    CRYPTOPANIC_API_KEY, OWNER_ID
+    CRYPTOPANIC_API_KEY
 )
 from db import add_or_update_user, get_user_profile, get_all_users, remove_user
+
+# 🔐 ID власника бота
+OWNER_ID = 6800873578
 
 logging.basicConfig(level=logging.INFO)
 
 fastapi_app = FastAPI()
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# 🌐 Локалізація
 LANGUAGES = {"uk": "Українська", "ru": "Русский", "en": "English"}
 
 TEXT = {
@@ -44,21 +45,15 @@ TEXT = {
     "not_subscribed": {"uk": "❌ Не підписані. Підпишіться: ", "ru": "❌ Не подписаны. Подпишитесь: ", "en": "❌ Not subscribed. Subscribe: "},
     "access_status": {"uk": "✅ Доступ активний, залишилось {days} днів", "ru": "✅ Доступ активен, осталось {days} дней", "en": "✅ Access active, {days} days left"},
     "no_access": {"uk": "❌ Немає активної підписки.", "ru": "❌ Нет подписки.", "en": "❌ No active subscription."},
-    "admin_stats": {"uk": "👥 Користувачі: {total}\n✅ Активні: {active}\n❌ Неактивні: {inactive}",
-                    "ru": "👥 Пользователи: {total}\n✅ Активные: {active}\n❌ Неактивные: {inactive}",
-                    "en": "👥 Users: {total}\n✅ Active: {active}\n❌ Inactive: {inactive}"}
 }
 
 user_lang = {}
 def lang(uid): return user_lang.get(uid, "uk")
 def tr(uid, key): return TEXT[key][lang(uid)]
 
-# ✅ Webhook
 @fastapi_app.post("/webhook")
 async def telegram_and_crypto_webhook(request: Request):
     data = await request.json()
-
-    # Webhook від CryptoBot
     if "payload" in data:
         payload = data["payload"]
         if ":" in payload:
@@ -71,40 +66,31 @@ async def telegram_and_crypto_webhook(request: Request):
             except Exception as e:
                 logging.error(f"❌ Webhook error: {e}")
         return {"ok": True}
-
-    # Webhook від Telegram
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
     return {"ok": True}
 
-# /start
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton(name, callback_data=f"lang:{code}")] for code, name in LANGUAGES.items()]
     await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
 
-# /myaccess
 async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await handle_cb(update, ctx)
 
-# /admin
 async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid != OWNER_ID:
-        return await update.message.reply_text("⛔️ Доступ лише для адміністратора.")
-    total = active = inactive = 0
-    now = datetime.datetime.now()
-    for u, exp in get_all_users():
-        total += 1
-        dt = datetime.datetime.fromisoformat(exp)
-        if dt > now:
-            active += 1
-        else:
-            inactive += 1
-    await update.message.reply_text(TEXT["admin_stats"]["uk"].format(
-        total=total, active=active, inactive=inactive
-    ))
+        await update.message.reply_text("⛔ Доступ заборонено.")
+        return
 
-# 📦 Callback
+    users = get_all_users()
+    total = len(users)
+    now = datetime.datetime.now()
+    active = sum(1 for _, exp in users if datetime.datetime.fromisoformat(exp) > now)
+    inactive = total - active
+    text = f"👥 Users: {total}\n✅ Active: {active}\n❌ Inactive: {inactive}"
+    await update.message.reply_text(text)
+
 async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -133,10 +119,11 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "paid_btn_url": f"https://t.me/{BOT_USERNAME}",
             "payload": f"{uid}:{data}"
         }
-        r = requests.post("https://pay.crypt.bot/api/createInvoice", json=payload,
-                          headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN})
-        if r.json().get("ok"):
-            url = r.json()["result"]["pay_url"]
+        resp = requests.post("https://pay.crypt.bot/api/createInvoice", json=payload,
+                             headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN})
+        rj = resp.json()
+        if rj.get("ok"):
+            url = rj["result"]["pay_url"]
             kb = [[InlineKeyboardButton("✅ Я оплатив", callback_data="check")]]
             await q.edit_message_text(f"💳 Оплатіть тут:\n{url}", reply_markup=InlineKeyboardMarkup(kb))
         else:
@@ -167,17 +154,14 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "commands":
         await q.edit_message_text(TEXT["commands_list"][lang(uid)])
 
-# 📰 Новини
 async def send_news(uid):
     async with httpx.AsyncClient() as cli:
-        r = await cli.get("https://cryptopanic.com/api/developer/v2/posts/", params={
-            "auth_token": CRYPTOPANIC_API_KEY, "public": "true", "kind": "news"
-        })
+        r = await cli.get("https://cryptopanic.com/api/developer/v2/posts/",
+                          params={"auth_token": CRYPTOPANIC_API_KEY, "public": "true", "kind": "news"})
         posts = r.json().get("results", [])[:3]
     msg = "📰 Останні новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
     await telegram_app.bot.send_message(uid, msg)
 
-# ⏰ Перевірка підписок
 async def check_expiry(_):
     now = datetime.datetime.now()
     for uid, exp in get_all_users():
@@ -187,7 +171,6 @@ async def check_expiry(_):
         if dt < now:
             remove_user(uid)
 
-# 🚀 Старт
 from uvicorn import Config, Server
 
 async def main():
