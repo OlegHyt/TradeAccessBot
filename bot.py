@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    ContextTypes, MessageHandler, filters
+    ContextTypes
 )
 from config import (
     BOT_TOKEN, BOT_USERNAME, TARIFFS,
@@ -16,9 +16,7 @@ from config import (
     CRYPTOPANIC_API_KEY
 )
 from db import add_or_update_user, get_user_profile, get_all_users, remove_user
-from uvicorn import Config, Server
 
-# 👤 Власник бота
 OWNER_ID = 6800873578
 
 logging.basicConfig(level=logging.INFO)
@@ -26,7 +24,6 @@ logging.basicConfig(level=logging.INFO)
 fastapi_app = FastAPI()
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# 🌐 Локалізація
 LANGUAGES = {"uk": "Українська", "ru": "Русский", "en": "English"}
 
 TEXT = {
@@ -39,9 +36,9 @@ TEXT = {
         "commands": {"uk": "📌 Команди", "ru": "📌 Команды", "en": "📌 Commands"},
     },
     "commands_list": {
-        "uk": "/start — запуск\n/myaccess — мій доступ\n/help — список команд\n/admin — адмін-панель",
-        "ru": "/start — запуск\n/myaccess — мой доступ\n/help — список команд\n/admin — админ-панель",
-        "en": "/start — start\n/myaccess — my access\n/help — command list\n/admin — admin panel"
+        "uk": "/start — стартове меню\n/myaccess — мій доступ\n/help — команди\n/admin — адмін-панель",
+        "ru": "/start — главное меню\n/myaccess — мой доступ\n/help — команды\n/admin — админ-панель",
+        "en": "/start — main menu\n/myaccess — my access\n/help — commands\n/admin — admin panel"
     },
     "choose_tariff": {"uk": "Оберіть тариф:", "ru": "Выберите тариф:", "en": "Choose tariff:"},
     "pay_success": {"uk": "✅ Доступ активовано!", "ru": "✅ Доступ активирован!", "en": "✅ Access activated!"},
@@ -54,17 +51,11 @@ user_lang = {}
 def lang(user_id): return user_lang.get(user_id, "uk")
 def tr(user_id, key): return TEXT[key][lang(user_id)]
 
-# ✅ /start
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    kb = [[InlineKeyboardButton(LANGUAGES[c], callback_data=f"lang:{c}")] for c in LANGUAGES]
-    await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
-
-# ✅ Webhook
 @fastapi_app.post("/webhook")
 async def telegram_and_crypto_webhook(request: Request):
     data = await request.json()
-    if "payload" in data:  # CryptoBot
+
+    if "payload" in data:
         payload = data["payload"]
         if ":" in payload:
             uid, key = payload.split(":")
@@ -81,7 +72,59 @@ async def telegram_and_crypto_webhook(request: Request):
     await telegram_app.process_update(update)
     return {"ok": True}
 
-# 📦 Callback обробник
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    kb = [[InlineKeyboardButton(name, callback_data=f"lang:{code}")] for code, name in LANGUAGES.items()]
+    await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
+
+async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await update.message.reply_text(TEXT["commands_list"][lang(uid)])
+
+async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    row = get_user_profile(uid)
+    if row:
+        days = (datetime.datetime.fromisoformat(row[1]) - datetime.datetime.now()).days
+        await update.message.reply_text(tr(uid, "access_status").format(days=days))
+    else:
+        await update.message.reply_text(tr(uid, "no_access"))
+
+async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid != OWNER_ID:
+        await update.message.reply_text("⛔️ Access denied.")
+        return
+
+    text = update.message.text
+    users = get_all_users()
+    active = 0
+    inactive = 0
+    now = datetime.datetime.now()
+
+    for _, exp in users:
+        dt = datetime.datetime.fromisoformat(exp)
+        if dt > now:
+            active += 1
+        else:
+            inactive += 1
+
+    msg = f"👥 Users: {len(users)}\n✅ Active: {active}\n❌ Inactive: {inactive}"
+
+    if " " in text:
+        q = text.split(" ", 1)[1].strip()
+        for u, exp in users:
+            try:
+                chat = await ctx.bot.get_chat(u)
+                name = f"{chat.first_name or ''} {chat.last_name or ''}".strip()
+                if q.lower() in name.lower() or q == str(u):
+                    left = (datetime.datetime.fromisoformat(exp) - now).days
+                    msg += f"\n\n🔍 Found: {name}\nID: {u}\n⏳ Days left: {max(0, left)}"
+                    break
+        else:
+            msg += "\n\n🚫 Not found."
+
+    await update.message.reply_text(msg)
+
 async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -91,8 +134,8 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data.startswith("lang:"):
         code = data.split(":", 1)[1]
         user_lang[uid] = code
-        name = q.from_user.first_name or "Користувач"
-        kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)] for k in TEXT["buttons"]]
+        name = q.from_user.first_name
+        kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)] for k in ["access", "subscribe", "news", "commands"]]
         await q.edit_message_text(TEXT["main_menu"][code].format(name=name), reply_markup=InlineKeyboardMarkup(kb))
 
     elif data == "subscribe":
@@ -124,8 +167,7 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             m = await ctx.bot.get_chat_member(CHANNEL_CHAT_ID, uid)
             if m.status in ["member", "administrator", "creator"]:
-                days = ctx.user_data.get("tdays", 30)
-                add_or_update_user(uid, days)
+                add_or_update_user(uid, ctx.user_data.get("tdays", 30))
                 await q.edit_message_text(tr(uid, "pay_success"))
             else:
                 raise Exception()
@@ -146,44 +188,6 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "commands":
         await q.edit_message_text(TEXT["commands_list"][lang(uid)])
 
-# 📊 /myaccess
-async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    row = get_user_profile(uid)
-    if row:
-        days = (datetime.datetime.fromisoformat(row[1]) - datetime.datetime.now()).days
-        await update.message.reply_text(TEXT["access_status"][lang(uid)].format(days=days))
-    else:
-        await update.message.reply_text(TEXT["no_access"][lang(uid)])
-
-# 🆘 /help
-async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    await update.message.reply_text(TEXT["commands_list"][lang(uid)])
-
-# 👨‍💼 /admin
-async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if uid != OWNER_ID:
-        return await update.message.reply_text("❌ Доступ заборонено.")
-    total = len(get_all_users())
-    active = sum((datetime.datetime.fromisoformat(exp) > datetime.datetime.now()) for uid, exp in get_all_users())
-    inactive = total - active
-    await update.message.reply_text(f"👥 Users: {total}\n✅ Active: {active}\n❌ Inactive: {inactive}\n🔍 Надішли ID або ім'я для пошуку:")
-
-# 🔍 Обробка пошуку користувача
-async def search_user(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
-        return
-    query = update.message.text.lower()
-    for uid, exp in get_all_users():
-        prof = get_user_profile(uid)
-        if prof and (query in str(uid) or query in prof[2].lower()):
-            days = (datetime.datetime.fromisoformat(prof[1]) - datetime.datetime.now()).days
-            return await update.message.reply_text(f"👤 {prof[2]} (ID: {uid})\n📅 Днів залишилось: {days}")
-    await update.message.reply_text("❌ Користувача не знайдено.")
-
-# 📰 Новини
 async def send_news(uid):
     async with httpx.AsyncClient() as cli:
         r = await cli.get("https://cryptopanic.com/api/developer/v2/posts/",
@@ -192,7 +196,6 @@ async def send_news(uid):
     msg = "📰 Останні новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
     await telegram_app.bot.send_message(uid, msg)
 
-# ⏰ Перевірка підписки
 async def check_expiry(_):
     now = datetime.datetime.now()
     for uid, exp in get_all_users():
@@ -202,21 +205,24 @@ async def check_expiry(_):
         if dt < now:
             remove_user(uid)
 
-# 🚀 main
+from uvicorn import Config, Server
+
 async def main():
     telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
     telegram_app.add_handler(CommandHandler("help", help_cmd))
+    telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
     telegram_app.add_handler(CommandHandler("admin", admin_cmd))
     telegram_app.add_handler(CallbackQueryHandler(handle_cb))
-    telegram_app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=OWNER_ID), search_user))
     telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
     await telegram_app.initialize()
 
-    config = Config(fastapi_app, host="0.0.0.0", port=8000)
+    config = Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
     server = Server(config)
 
-    await asyncio.gather(telegram_app.start(), server.serve())
+    await asyncio.gather(
+        telegram_app.start(),
+        server.serve()
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
