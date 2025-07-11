@@ -3,8 +3,6 @@ import datetime
 import logging
 import requests
 import httpx
-import uvicorn
-import threading
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -20,10 +18,8 @@ from db import add_or_update_user, get_user_profile, get_all_users, remove_user
 
 logging.basicConfig(level=logging.INFO)
 
-# FastAPI для вебхука від CryptoBot
+# FastAPI для webhook
 fastapi_app = FastAPI()
-
-# Telegram application
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 # 🌐 Локалізація
@@ -74,12 +70,12 @@ async def webhook(request: Request):
             logging.error(f"❌ Webhook error: {e}")
     return {"ok": True}
 
-# 📌 /start — вибір мови
+# 📌 /start
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton(name, callback_data=f"lang:{code}")] for code, name in LANGUAGES.items()]
     await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
 
-# 📦 Callback обробник
+# 📦 Callback
 async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -143,7 +139,7 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "commands":
         await q.edit_message_text(TEXT["commands_list"][lang(uid)])
 
-# 📰 Надсилання новин
+# 📰 Новини
 async def send_news(uid):
     async with httpx.AsyncClient() as cli:
         r = await cli.get("https://cryptopanic.com/api/developer/v2/posts/",
@@ -156,7 +152,7 @@ async def send_news(uid):
 async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await handle_cb(update, ctx)
 
-# ⏰ Перевірка закінчення доступу
+# ⏰ Перевірка доступу
 async def check_expiry(_):
     now = datetime.datetime.now()
     for uid, exp in get_all_users():
@@ -166,26 +162,7 @@ async def check_expiry(_):
         if dt < now:
             remove_user(uid)
 
-# 🔁 Запуск FastAPI + Telegram в потоках
-def start_fastapi():
-    uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
-
-def start_telegram():
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
-    telegram_app.add_handler(CallbackQueryHandler(handle_cb))
-    telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
-
-    print("✅ Telegram бот запущено")
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(telegram_app.initialize())
-    loop.create_task(telegram_app.start())
-    loop.run_forever()
-
-# 🟢 Старт
-import asyncio
+# 🟢 Старт Telegram + FastAPI
 from uvicorn import Config, Server
 
 async def main():
@@ -193,12 +170,13 @@ async def main():
     telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
     telegram_app.add_handler(CallbackQueryHandler(handle_cb))
     telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
+
     await telegram_app.initialize()
 
     config = Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
     server = Server(config)
 
-    # Паралельний запуск FastAPI та Telegram
+    logging.info("✅ Telegram бот запущено")
     await asyncio.gather(
         telegram_app.start(),
         server.serve()
