@@ -47,14 +47,14 @@ TEXT = {
     "buttons": {
         "access": {"uk": "📊 Мій доступ", "ru": "📊 Мой доступ", "en": "📊 My Access"},
         "subscribe": {"uk": "🔁 Продовжити підписку", "ru": "🔁 Продлить подписку", "en": "🔁 Renew Subscription"},
-        "freetrial": {"uk": "🎁 Безкоштовно на 1 годину", "ru": "🎁 Бесплатно на 1 час", "en": "🎁 Free 1-hour trial"},
+        "freetrial": {"uk": "🎁 Безкоштовно на 1 годину", "ru": "🎁 Бесплатно на 1 час", "en": "🎁 Free for 1 hour"},
         "news": {"uk": "📰 Новини", "ru": "📰 Новости", "en": "📰 News"},
         "commands": {"uk": "📌 Команди", "ru": "📌 Команды", "en": "📌 Commands"},
     },
     "commands_list": {
-        "uk": "/start — стартове меню\n/myaccess — мій доступ\n/help — команди\n/admin — адмін-панель\n/ask — GPT\n/testask — тест для адміна\n/price — ціни",
-        "ru": "/start — главное меню\n/myaccess — мой доступ\n/help — команды\n/admin — админ-панель\n/ask — GPT\n/testask — тест для админа\n/price — цены",
-        "en": "/start — main menu\n/myaccess — my access\n/help — commands\n/admin — admin panel\n/ask — GPT\n/testask — admin test\n/price — prices"
+        "uk": "/start — стартове меню\n/myaccess — мій доступ\n/help — команди\n/admin — адмін-панель\n/ask — GPT\n/testask — тестова команда (адмін)\n/price — ціни",
+        "ru": "/start — главное меню\n/myaccess — мой доступ\n/help — команды\n/admin — админ-панель\n/ask — GPT\n/testask — тестовая команда (админ)\n/price — цены",
+        "en": "/start — main menu\n/myaccess — my access\n/help — commands\n/admin — admin panel\n/ask — GPT\n/testask — test command (admin)\n/price — prices"
     },
     "choose_tariff": {"uk": "Оберіть тариф:", "ru": "Выберите тариф:", "en": "Choose tariff:"},
     "pay_success": {"uk": "✅ Доступ активовано!", "ru": "✅ Доступ активирован!", "en": "✅ Access activated!"},
@@ -81,6 +81,10 @@ async def webhook(request: Request):
     return {"ok": True}
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    # Автоматична активація підписки для OWNER_ID на 10 років
+    if uid == OWNER_ID:
+        add_or_update_user(uid, 365*10)
     kb = [[InlineKeyboardButton(name, callback_data=f"lang:{code}")] for code, name in LANGUAGES.items()]
     await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
 
@@ -151,9 +155,9 @@ async def ask_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def testask_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid != OWNER_ID:
-        await update.message.reply_text("⛔ Ця команда лише для адміна.")
+        await update.message.reply_text("⛔ Access denied.")
         return
-    await update.message.reply_text("✅ Тестова команда адміна успішно виконана!")
+    await update.message.reply_text("✅ Це тестова команда лише для адміна.")
 
 async def price_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     r = requests.get("https://api.binance.com/api/v3/ticker/price?symbols=[\"BTCUSDT\",\"ETHUSDT\"]")
@@ -217,7 +221,6 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(tr(uid, "no_access"))
 
     elif data == "freetrial":
-        # Автоматично даємо доступ 1 день (або 1 година)
         add_or_update_user(uid, 1)
         await q.edit_message_text("✅ Активовано безкоштовний доступ на 1 годину!")
 
@@ -247,6 +250,9 @@ async def check_expiry(_):
 from uvicorn import Config, Server
 
 async def main():
+    # Автоматично активуємо підписку власнику при запуску
+    add_or_update_user(OWNER_ID, 365*10)
+
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("help", help_cmd))
     telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
