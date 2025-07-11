@@ -17,12 +17,13 @@ from config import (
 )
 from db import add_or_update_user, get_user_profile, get_all_users, remove_user
 
+OWNER_ID = 6800873578
+
 logging.basicConfig(level=logging.INFO)
 
 fastapi_app = FastAPI()
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# 🌐 Локалізація
 LANGUAGES = {"uk": "Українська", "ru": "Русский", "en": "English"}
 
 TEXT = {
@@ -50,12 +51,9 @@ user_lang = {}
 def lang(user_id): return user_lang.get(user_id, "uk")
 def tr(user_id, key): return TEXT[key][lang(user_id)]
 
-# ✅ Webhook для Telegram і CryptoBot
 @fastapi_app.post("/webhook")
 async def telegram_and_crypto_webhook(request: Request):
     data = await request.json()
-
-    # Webhook від CryptoBot
     if "payload" in data:
         payload = data["payload"]
         if ":" in payload:
@@ -69,21 +67,26 @@ async def telegram_and_crypto_webhook(request: Request):
                 logging.error(f"❌ Webhook error: {e}")
         return {"ok": True}
 
-    # Webhook від Telegram
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
     return {"ok": True}
 
-# /start
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton(name, callback_data=f"lang:{code}")] for code, name in LANGUAGES.items()]
     await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
 
-# /myaccess (через callback для спільності)
 async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await handle_cb(update, ctx)
 
-# 📦 Callback обробник
+async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("⛔️ Access denied.")
+        return
+    users = get_all_users()
+    total = len(users)
+    active = sum((datetime.datetime.fromisoformat(row[1]) > datetime.datetime.now()) for row in users)
+    await update.message.reply_text(f"👥 Users: {total}\n✅ Active: {active}\n❌ Inactive: {total - active}")
+
 async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -147,7 +150,6 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "commands":
         await q.edit_message_text(TEXT["commands_list"][lang(uid)])
 
-# 📰 Новини
 async def send_news(uid):
     async with httpx.AsyncClient() as cli:
         r = await cli.get("https://cryptopanic.com/api/developer/v2/posts/",
@@ -156,7 +158,6 @@ async def send_news(uid):
     msg = "📰 Останні новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
     await telegram_app.bot.send_message(uid, msg)
 
-# ⏰ Перевірка закінчення підписки
 async def check_expiry(_):
     now = datetime.datetime.now()
     for uid, exp in get_all_users():
@@ -166,12 +167,12 @@ async def check_expiry(_):
         if dt < now:
             remove_user(uid)
 
-# 🚀 Головна точка входу
 from uvicorn import Config, Server
 
 async def main():
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
+    telegram_app.add_handler(CommandHandler("admin", admin_cmd))
     telegram_app.add_handler(CallbackQueryHandler(handle_cb))
     telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
     await telegram_app.initialize()
