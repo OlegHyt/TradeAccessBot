@@ -185,7 +185,7 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             await q.edit_message_text("❌ Помилка створення рахунку.")
 
-    elif data == "check":
+       elif data == "check":
         try:
             m = await ctx.bot.get_chat_member(CHANNEL_CHAT_ID, uid)
             if m.status in ["member", "administrator", "creator"]:
