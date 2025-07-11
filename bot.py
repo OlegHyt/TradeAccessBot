@@ -157,7 +157,6 @@ async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await handle_cb(update, ctx)
 
 # ⏰ Перевірка закінчення доступу
-# ⏰ Перевірка закінчення доступу
 async def check_expiry(_):
     now = datetime.datetime.now()
     for uid, exp in get_all_users():
@@ -179,7 +178,7 @@ def start_telegram():
     print("✅ Telegram бот запущено")
     telegram_app.run_polling()
 
-# 🟢 Старт після визначень
+# 🟢 Старт (в самому низу!)
 if __name__ == "__main__":
     threading.Thread(target=start_fastapi).start()
     threading.Thread(target=start_telegram).start()
