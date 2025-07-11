@@ -47,13 +47,14 @@ TEXT = {
     "buttons": {
         "access": {"uk": "📊 Мій доступ", "ru": "📊 Мой доступ", "en": "📊 My Access"},
         "subscribe": {"uk": "🔁 Продовжити підписку", "ru": "🔁 Продлить подписку", "en": "🔁 Renew Subscription"},
+        "freetrial": {"uk": "🎁 Безкоштовно на 1 годину", "ru": "🎁 Бесплатно на 1 час", "en": "🎁 Free 1-hour trial"},
         "news": {"uk": "📰 Новини", "ru": "📰 Новости", "en": "📰 News"},
         "commands": {"uk": "📌 Команди", "ru": "📌 Команды", "en": "📌 Commands"},
     },
     "commands_list": {
-        "uk": "/start — стартове меню\n/myaccess — мій доступ\n/help — команди\n/admin — адмін-панель\n/ask — GPT\n/price — ціни",
-        "ru": "/start — главное меню\n/myaccess — мой доступ\n/help — команды\n/admin — админ-панель\n/ask — GPT\n/price — цены",
-        "en": "/start — main menu\n/myaccess — my access\n/help — commands\n/admin — admin panel\n/ask — GPT\n/price — prices"
+        "uk": "/start — стартове меню\n/myaccess — мій доступ\n/help — команди\n/admin — адмін-панель\n/ask — GPT\n/testask — тест для адміна\n/price — ціни",
+        "ru": "/start — главное меню\n/myaccess — мой доступ\n/help — команды\n/admin — админ-панель\n/ask — GPT\n/testask — тест для админа\n/price — цены",
+        "en": "/start — main menu\n/myaccess — my access\n/help — commands\n/admin — admin panel\n/ask — GPT\n/testask — admin test\n/price — prices"
     },
     "choose_tariff": {"uk": "Оберіть тариф:", "ru": "Выберите тариф:", "en": "Choose tariff:"},
     "pay_success": {"uk": "✅ Доступ активовано!", "ru": "✅ Доступ активирован!", "en": "✅ Access activated!"},
@@ -147,6 +148,13 @@ async def ask_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     answer = res.choices[0].message.content
     await update.message.reply_text(answer[:4000])
 
+async def testask_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid != OWNER_ID:
+        await update.message.reply_text("⛔ Ця команда лише для адміна.")
+        return
+    await update.message.reply_text("✅ Тестова команда адміна успішно виконана!")
+
 async def price_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     r = requests.get("https://api.binance.com/api/v3/ticker/price?symbols=[\"BTCUSDT\",\"ETHUSDT\"]")
     data = r.json()
@@ -163,7 +171,7 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         code = data.split(":")[1]
         user_lang[uid] = code
         name = q.from_user.first_name
-        kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)] for k in ["access", "subscribe", "news", "commands"]]
+        kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)] for k in ["access", "subscribe", "freetrial", "news", "commands"]]
         await q.edit_message_text(TEXT["main_menu"][code].format(name=name), reply_markup=InlineKeyboardMarkup(kb))
 
     elif data == "subscribe":
@@ -208,6 +216,11 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             await q.edit_message_text(tr(uid, "no_access"))
 
+    elif data == "freetrial":
+        # Автоматично даємо доступ 1 день (або 1 година)
+        add_or_update_user(uid, 1)
+        await q.edit_message_text("✅ Активовано безкоштовний доступ на 1 годину!")
+
     elif data == "news":
         await send_news(uid)
 
@@ -239,6 +252,7 @@ async def main():
     telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
     telegram_app.add_handler(CommandHandler("admin", admin_cmd))
     telegram_app.add_handler(CommandHandler("ask", ask_cmd))
+    telegram_app.add_handler(CommandHandler("testask", testask_cmd))
     telegram_app.add_handler(CommandHandler("price", price_cmd))
     telegram_app.add_handler(CallbackQueryHandler(handle_cb))
     telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
