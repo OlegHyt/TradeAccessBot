@@ -1,0 +1,19 @@
+# Ігноруємо .env, щоб токени не потрапили у публічний репозиторій
+.env
+
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# VS Code settings
+.vscode/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# OS-specific
+.DS_Store
+Thumbs.db
