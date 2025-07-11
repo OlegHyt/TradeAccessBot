@@ -6,8 +6,7 @@ import httpx
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    ContextTypes
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 )
 from config import (
     BOT_TOKEN, BOT_USERNAME, TARIFFS,
@@ -16,8 +15,7 @@ from config import (
 )
 from db import add_or_update_user, get_user_profile, get_all_users, remove_user
 
-from uvicorn import Config, Server
-
+# 🔐 Власник бота
 OWNER_ID = 6800873578
 
 logging.basicConfig(level=logging.INFO)
@@ -25,11 +23,16 @@ logging.basicConfig(level=logging.INFO)
 fastapi_app = FastAPI()
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+# 🌐 Локалізація
 LANGUAGES = {"uk": "Українська", "ru": "Русский", "en": "English"}
 
 TEXT = {
-    "choose_lang": {"uk": "Оберіть мову:", "ru": "Выберите язык:", "en": "Choose your language:"},
-    "main_menu": {"uk": "Вітаю, {name}!\nОберіть:", "ru": "Привет, {name}!\nВыберите:", "en": "Welcome, {name}!\nChoose:"},
+    "choose_lang": {
+        "uk": "Оберіть мову:", "ru": "Выберите язык:", "en": "Choose your language:"
+    },
+    "main_menu": {
+        "uk": "Вітаю, {name}!\nОберіть:", "ru": "Привет, {name}!\nВыберите:", "en": "Welcome, {name}!\nChoose:"
+    },
     "buttons": {
         "access": {"uk": "📊 Мій доступ", "ru": "📊 Мой доступ", "en": "📊 My Access"},
         "subscribe": {"uk": "🔁 Продовжити підписку", "ru": "🔁 Продлить подписку", "en": "🔁 Renew Subscription"},
@@ -41,17 +44,32 @@ TEXT = {
         "ru": "/start — главное меню\n/myaccess — мой доступ\n/help — команды\n/admin — админ-панель",
         "en": "/start — main menu\n/myaccess — my access\n/help — commands\n/admin — admin panel"
     },
-    "choose_tariff": {"uk": "Оберіть тариф:", "ru": "Выберите тариф:", "en": "Choose tariff:"},
-    "pay_success": {"uk": "✅ Доступ активовано!", "ru": "✅ Доступ активирован!", "en": "✅ Access activated!"},
-    "not_subscribed": {"uk": "❌ Не підписані. Підпишіться: ", "ru": "❌ Не подписаны. Подпишитесь: ", "en": "❌ Not subscribed. Subscribe: "},
-    "access_status": {"uk": "✅ Доступ активний, залишилось {days} днів", "ru": "✅ Доступ активен, осталось {days} дней", "en": "✅ Access active, {days} days left"},
-    "no_access": {"uk": "❌ Немає активної підписки.", "ru": "❌ Нет подписки.", "en": "❌ No active subscription."},
+    "choose_tariff": {
+        "uk": "Оберіть тариф:", "ru": "Выберите тариф:", "en": "Choose tariff:"
+    },
+    "pay_success": {
+        "uk": "✅ Доступ активовано!", "ru": "✅ Доступ активирован!", "en": "✅ Access activated!"
+    },
+    "not_subscribed": {
+        "uk": "❌ Не підписані. Підпишіться: ", "ru": "❌ Не подписаны. Подпишитесь: ", "en": "❌ Not subscribed. Subscribe: "
+    },
+    "access_status": {
+        "uk": "✅ Доступ активний, залишилось {days} днів",
+        "ru": "✅ Доступ активен, осталось {days} дней",
+        "en": "✅ Access active, {days} days left"
+    },
+    "no_access": {
+        "uk": "❌ Немає активної підписки.",
+        "ru": "❌ Нет подписки.",
+        "en": "❌ No active subscription."
+    },
 }
 
 user_lang = {}
 def lang(user_id): return user_lang.get(user_id, "uk")
 def tr(user_id, key): return TEXT[key][lang(user_id)]
 
+# 📩 Webhook обробка (Telegram + CryptoBot)
 @fastapi_app.post("/webhook")
 async def telegram_and_crypto_webhook(request: Request):
     data = await request.json()
@@ -73,14 +91,17 @@ async def telegram_and_crypto_webhook(request: Request):
     await telegram_app.process_update(update)
     return {"ok": True}
 
+# 🟢 /start
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton(name, callback_data=f"lang:{code}")] for code, name in LANGUAGES.items()]
     await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
 
+# ❔ /help
 async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     await update.message.reply_text(TEXT["commands_list"][lang(uid)])
 
+# 📊 /myaccess
 async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     row = get_user_profile(uid)
@@ -90,6 +111,7 @@ async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(tr(uid, "no_access"))
 
+# 👑 /admin
 async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid != OWNER_ID:
@@ -98,16 +120,12 @@ async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
     users = get_all_users()
-    active = 0
-    inactive = 0
+    active, inactive = 0, 0
     now = datetime.datetime.now()
 
     for _, exp in users:
         dt = datetime.datetime.fromisoformat(exp)
-        if dt > now:
-            active += 1
-        else:
-            inactive += 1
+        (active if dt > now else inactive) += 1
 
     msg = f"👥 Users: {len(users)}\n✅ Active: {active}\n❌ Inactive: {inactive}"
 
@@ -121,11 +139,14 @@ async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     left = (datetime.datetime.fromisoformat(exp) - now).days
                     msg += f"\n\n🔍 Found: {name}\nID: {u}\n⏳ Days left: {max(0, left)}"
                     break
+            except:
+                continue
         else:
             msg += "\n\n🚫 Not found."
 
     await update.message.reply_text(msg)
 
+# 🔄 Callback handler
 async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -189,6 +210,7 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "commands":
         await q.edit_message_text(TEXT["commands_list"][lang(uid)])
 
+# 📰 Новини
 async def send_news(uid):
     async with httpx.AsyncClient() as cli:
         r = await cli.get("https://cryptopanic.com/api/developer/v2/posts/",
@@ -197,6 +219,7 @@ async def send_news(uid):
     msg = "📰 Останні новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
     await telegram_app.bot.send_message(uid, msg)
 
+# ⏰ Щогодинна перевірка підписок
 async def check_expiry(_):
     now = datetime.datetime.now()
     for uid, exp in get_all_users():
@@ -205,6 +228,9 @@ async def check_expiry(_):
             await telegram_app.bot.send_message(uid, "⚠️ Завтра завершується підписка.")
         if dt < now:
             remove_user(uid)
+
+# 🚀 Запуск FastAPI + Telegram Bot
+from uvicorn import Config, Server
 
 async def main():
     telegram_app.add_handler(CommandHandler("start", start))
