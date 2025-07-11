@@ -166,18 +166,22 @@ async def check_expiry(_):
         if dt < now:
             remove_user(uid)
 
-# 🔁 Запуск FastAPI + Telegram в потоках
-def start_fastapi():
-    uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
-
-def start_telegram():
+# ✅ Асинхронний запуск Telegram без run_polling
+async def run_telegram():
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
     telegram_app.add_handler(CallbackQueryHandler(handle_cb))
     telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
-    print("✅ Telegram бот запущено")
-    telegram_app.run_polling()
+
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.updater.start_polling()
+    await telegram_app.updater.idle()
+
+# 🔁 Старт FastAPI + Telegram
+def start_fastapi():
+    uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
     threading.Thread(target=start_fastapi).start()
-    threading.Thread(target=start_telegram).start()
+    asyncio.run(run_telegram())
