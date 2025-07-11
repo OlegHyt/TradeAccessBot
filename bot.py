@@ -1,4 +1,4 @@
-# ✅ Повний робочий bot.py (версія з GPT-4o, Binance, /ask, /price, FastAPI, локалізацією, оплатою, webhook)
+# ✅ Повний робочий bot.py (GPT-4o, Binance, FastAPI, GPT, CryptoPanic)
 # ⚙️ Залежності: python-telegram-bot[fast], openai, python-dotenv, httpx, requests, apscheduler
 
 import os
@@ -50,26 +50,10 @@ TEXT = {
         "news": {"uk": "📰 Новини", "ru": "📰 Новости", "en": "📰 News"},
         "commands": {"uk": "📌 Команди", "ru": "📌 Команды", "en": "📌 Commands"},
     },
-
     "commands_list": {
-        "uk": "/start — стартове меню
-/myaccess — мій доступ
-/help — команди
-/admin — адмін-панель
-/ask — GPT
-/price — ціни",
-        "ru": "/start — главное меню
-/myaccess — мой доступ
-/help — команды
-/admin — админ-панель
-/ask — GPT
-/price — цены",
-        "en": "/start — main menu
-/myaccess — my access
-/help — commands
-/admin — admin panel
-/ask — GPT
-/price — prices"
+        "uk": "/start — стартове меню\n/myaccess — мій доступ\n/help — команди\n/admin — адмін-панель\n/ask — GPT\n/price — ціни",
+        "ru": "/start — главное меню\n/myaccess — мой доступ\n/help — команды\n/admin — админ-панель\n/ask — GPT\n/price — цены",
+        "en": "/start — main menu\n/myaccess — my access\n/help — commands\n/admin — admin panel\n/ask — GPT\n/price — prices"
     },
     "choose_tariff": {"uk": "Оберіть тариф:", "ru": "Выберите тариф:", "en": "Choose tariff:"},
     "pay_success": {"uk": "✅ Доступ активовано!", "ru": "✅ Доступ активирован!", "en": "✅ Access activated!"},
@@ -128,9 +112,7 @@ async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             inactive += 1
 
-    msg = f"👥 Users: {len(users)}
-✅ Active: {active}
-❌ Inactive: {inactive}"
+    msg = f"👥 Users: {len(users)}\n✅ Active: {active}\n❌ Inactive: {inactive}"
 
     if " " in text:
         q = text.split(" ", 1)[1].strip()
@@ -140,17 +122,12 @@ async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 name = f"{chat.first_name or ''} {chat.last_name or ''}".strip()
                 if q.lower() in name.lower() or q == str(u):
                     left = (datetime.datetime.fromisoformat(exp) - now).days
-                    msg += f"
-
-🔍 Found: {name}
-ID: {u}
-⏳ Days left: {max(0, left)}"
+                    msg += f"\n\n🔍 Found: {name}\nID: {u}\n⏳ Days left: {max(0, left)}"
                     break
-            except: pass
+            except:
+                pass
         else:
-            msg += "
-
-🚫 Not found."
+            msg += "\n\n🚫 Not found."
 
     await update.message.reply_text(msg)
 
@@ -171,12 +148,10 @@ async def ask_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(answer[:4000])
 
 async def price_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    r = requests.get("https://api.binance.com/api/v3/ticker/price?symbols=["BTCUSDT","ETHUSDT"]")
+    r = requests.get("https://api.binance.com/api/v3/ticker/price?symbols=[\"BTCUSDT\",\"ETHUSDT\"]")
     data = r.json()
-    msg = "
-".join(f"{d['symbol']}: {d['price']}" for d in data)
-    await update.message.reply_text(f"💱 Поточні ціни:
-{msg}")
+    msg = "\n".join(f"{d['symbol']}: {d['price']}" for d in data)
+    await update.message.reply_text(f"💱 Поточні ціни:\n{msg}")
 
 async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -210,8 +185,7 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if rj.get("ok"):
             url = rj["result"]["pay_url"]
             kb = [[InlineKeyboardButton("✅ Я оплатив", callback_data="check")]]
-            await q.edit_message_text(f"💳 Оплатіть тут:
-{url}", reply_markup=InlineKeyboardMarkup(kb))
+            await q.edit_message_text(f"💳 Оплатіть тут:\n{url}", reply_markup=InlineKeyboardMarkup(kb))
         else:
             await q.edit_message_text("❌ Помилка створення рахунку.")
 
@@ -245,9 +219,7 @@ async def send_news(uid):
         r = await cli.get("https://cryptopanic.com/api/developer/v2/posts/",
                           params={"auth_token": CRYPTOPANIC_API_KEY, "public": "true", "kind": "news"})
         posts = r.json().get("results", [])[:3]
-    msg = "📰 Останні новини:
-" + "
-".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
+    msg = "📰 Останні новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
     await telegram_app.bot.send_message(uid, msg)
 
 async def check_expiry(_):
