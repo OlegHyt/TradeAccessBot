@@ -7,23 +7,22 @@ import uvicorn
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    ContextTypes
 )
 from config import (
     BOT_TOKEN, BOT_USERNAME, TARIFFS,
     CRYPTO_PAY_TOKEN, CHANNEL_CHAT_ID, CHANNEL_LINK,
-    CRYPTOPANIC_API_KEY
+    CRYPTOPANIC_API_KEY, OWNER_ID
 )
 from db import add_or_update_user, get_user_profile, get_all_users, remove_user
-
-# 🔐 ID власника бота
-OWNER_ID = 6800873578
 
 logging.basicConfig(level=logging.INFO)
 
 fastapi_app = FastAPI()
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+# 🌐 Локалізація
 LANGUAGES = {"uk": "Українська", "ru": "Русский", "en": "English"}
 
 TEXT = {
@@ -48,12 +47,15 @@ TEXT = {
 }
 
 user_lang = {}
-def lang(uid): return user_lang.get(uid, "uk")
-def tr(uid, key): return TEXT[key][lang(uid)]
+def lang(user_id): return user_lang.get(user_id, "uk")
+def tr(user_id, key): return TEXT[key][lang(user_id)]
 
+# ✅ Webhook
 @fastapi_app.post("/webhook")
 async def telegram_and_crypto_webhook(request: Request):
     data = await request.json()
+
+    # Webhook CryptoBot
     if "payload" in data:
         payload = data["payload"]
         if ":" in payload:
@@ -66,31 +68,36 @@ async def telegram_and_crypto_webhook(request: Request):
             except Exception as e:
                 logging.error(f"❌ Webhook error: {e}")
         return {"ok": True}
+
+    # Webhook Telegram
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
     return {"ok": True}
 
+# /start
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton(name, callback_data=f"lang:{code}")] for code, name in LANGUAGES.items()]
     await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
 
+# /myaccess
 async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await handle_cb(update, ctx)
 
+# /admin
 async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid != OWNER_ID:
-        await update.message.reply_text("⛔ Доступ заборонено.")
+        await update.message.reply_text("🚫 Доступ заборонено.")
         return
 
     users = get_all_users()
     total = len(users)
-    now = datetime.datetime.now()
-    active = sum(1 for _, exp in users if datetime.datetime.fromisoformat(exp) > now)
+    active = sum((datetime.datetime.fromisoformat(row[1]) > datetime.datetime.now()) for row in users)
     inactive = total - active
-    text = f"👥 Users: {total}\n✅ Active: {active}\n❌ Inactive: {inactive}"
-    await update.message.reply_text(text)
+    msg = f"👥 Users: {total}\n✅ Active: {active}\n❌ Inactive: {inactive}"
+    await update.message.reply_text(msg)
 
+# 📦 Callback обробник
 async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -98,7 +105,7 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = q.data
 
     if data.startswith("lang:"):
-        code = data.split(":")[1]
+        code = data.split(":", 1)[1]
         user_lang[uid] = code
         name = q.from_user.first_name
         kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)] for k in ["access", "subscribe", "news", "commands"]]
@@ -154,6 +161,7 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "commands":
         await q.edit_message_text(TEXT["commands_list"][lang(uid)])
 
+# 📰 Новини
 async def send_news(uid):
     async with httpx.AsyncClient() as cli:
         r = await cli.get("https://cryptopanic.com/api/developer/v2/posts/",
@@ -162,6 +170,7 @@ async def send_news(uid):
     msg = "📰 Останні новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
     await telegram_app.bot.send_message(uid, msg)
 
+# ⏰ Перевірка завершення
 async def check_expiry(_):
     now = datetime.datetime.now()
     for uid, exp in get_all_users():
@@ -171,6 +180,7 @@ async def check_expiry(_):
         if dt < now:
             remove_user(uid)
 
+# 🚀 main
 from uvicorn import Config, Server
 
 async def main():
