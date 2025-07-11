@@ -16,6 +16,7 @@ from config import (
     CRYPTOPANIC_API_KEY
 )
 from db import add_or_update_user, get_user_profile, get_all_users, remove_user
+from uvicorn import Config, Server
 
 # 👤 Власник бота
 OWNER_ID = 6800873578
@@ -53,6 +54,12 @@ user_lang = {}
 def lang(user_id): return user_lang.get(user_id, "uk")
 def tr(user_id, key): return TEXT[key][lang(user_id)]
 
+# ✅ /start
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    kb = [[InlineKeyboardButton(LANGUAGES[c], callback_data=f"lang:{c}")] for c in LANGUAGES]
+    await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
+
 # ✅ Webhook
 @fastapi_app.post("/webhook")
 async def telegram_and_crypto_webhook(request: Request):
@@ -84,7 +91,7 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data.startswith("lang:"):
         code = data.split(":", 1)[1]
         user_lang[uid] = code
-        name = q.from_user.first_name
+        name = q.from_user.first_name or "Користувач"
         kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)] for k in TEXT["buttons"]]
         await q.edit_message_text(TEXT["main_menu"][code].format(name=name), reply_markup=InlineKeyboardMarkup(kb))
 
@@ -117,7 +124,8 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             m = await ctx.bot.get_chat_member(CHANNEL_CHAT_ID, uid)
             if m.status in ["member", "administrator", "creator"]:
-                add_or_update_user(uid, ctx.user_data.get("tdays", 30))
+                days = ctx.user_data.get("tdays", 30)
+                add_or_update_user(uid, days)
                 await q.edit_message_text(tr(uid, "pay_success"))
             else:
                 raise Exception()
@@ -170,7 +178,7 @@ async def search_user(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.lower()
     for uid, exp in get_all_users():
         prof = get_user_profile(uid)
-        if prof and (query in str(uid) or query in prof[2].lower()):  # name
+        if prof and (query in str(uid) or query in prof[2].lower()):
             days = (datetime.datetime.fromisoformat(prof[1]) - datetime.datetime.now()).days
             return await update.message.reply_text(f"👤 {prof[2]} (ID: {uid})\n📅 Днів залишилось: {days}")
     await update.message.reply_text("❌ Користувача не знайдено.")
@@ -195,8 +203,6 @@ async def check_expiry(_):
             remove_user(uid)
 
 # 🚀 main
-from uvicorn import Config, Server
-
 async def main():
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
