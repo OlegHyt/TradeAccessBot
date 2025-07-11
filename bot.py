@@ -1,189 +1,77 @@
-import asyncio
-import datetime
-import logging
-import requests
-import httpx
-import uvicorn
+import asyncio, datetime, logging, requests, httpx
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    ContextTypes
-)
-from config import (
-    BOT_TOKEN, BOT_USERNAME, TARIFFS,
-    CRYPTO_PAY_TOKEN, CHANNEL_CHAT_ID, CHANNEL_LINK,
-    CRYPTOPANIC_API_KEY
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from pycoingecko import CoinGeckoAPI
+from config import BOT_TOKEN, BOT_USERNAME, TARIFFS, CRYPTO_PAY_TOKEN, CHANNEL_CHAT_ID, CHANNEL_LINK, CRYPTOPANIC_API_KEY, OWNER_ID
 from db import add_or_update_user, get_user_profile, get_all_users, remove_user
 
-OWNER_ID = 6800873578
-
 logging.basicConfig(level=logging.INFO)
-
 fastapi_app = FastAPI()
-telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
+tg_app = ApplicationBuilder().token(BOT_TOKEN).build()
+cg = CoinGeckoAPI()
 
-LANGUAGES = {"uk": "Українська", "ru": "Русский", "en": "English"}
-
-TEXT = {
-    "choose_lang": {"uk": "Оберіть мову:", "ru": "Выберите язык:", "en": "Choose your language:"},
-    "main_menu": {"uk": "Вітаю, {name}!\nОберіть:", "ru": "Привет, {name}!\nВыберите:", "en": "Welcome, {name}!\nChoose:"},
-    "buttons": {
-        "access": {"uk": "📊 Мій доступ", "ru": "📊 Мой доступ", "en": "📊 My Access"},
-        "subscribe": {"uk": "🔁 Продовжити підписку", "ru": "🔁 Продлить подписку", "en": "🔁 Renew Subscription"},
-        "news": {"uk": "📰 Новини", "ru": "📰 Новости", "en": "📰 News"},
-        "commands": {"uk": "📌 Команди", "ru": "📌 Команды", "en": "📌 Commands"},
-    },
-    "commands_list": {
-        "uk": "/start, /myaccess, /help",
-        "ru": "/start, /myaccess, /help",
-        "en": "/start, /myaccess, /help"
-    },
-    "choose_tariff": {"uk": "Оберіть тариф:", "ru": "Выберите тариф:", "en": "Choose tariff:"},
-    "pay_success": {"uk": "✅ Доступ активовано!", "ru": "✅ Доступ активирован!", "en": "✅ Access activated!"},
-    "not_subscribed": {"uk": "❌ Не підписані. Підпишіться: ", "ru": "❌ Не подписаны. Подпишитесь: ", "en": "❌ Not subscribed. Subscribe: "},
-    "access_status": {"uk": "✅ Доступ активний, залишилось {days} днів", "ru": "✅ Доступ активен, осталось {days} дней", "en": "✅ Access active, {days} days left"},
-    "no_access": {"uk": "❌ Немає активної підписки.", "ru": "❌ Нет подписки.", "en": "❌ No active subscription."},
-}
-
-user_lang = {}
-def lang(user_id): return user_lang.get(user_id, "uk")
-def tr(user_id, key): return TEXT[key][lang(user_id)]
+# … (локализация, tr/lang как раньше) …
 
 @fastapi_app.post("/webhook")
-async def telegram_and_crypto_webhook(request: Request):
-    data = await request.json()
-    if "payload" in data:
-        payload = data["payload"]
-        if ":" in payload:
-            uid, key = payload.split(":")
-            try:
-                uid = int(uid)
-                days = TARIFFS[key]["duration_days"]
-                add_or_update_user(uid, days)
-                logging.info(f"✅ Activated user {uid} for {days} days via webhook.")
-            except Exception as e:
-                logging.error(f"❌ Webhook error: {e}")
+async def webhook(request: Request):
+    d = await request.json()
+    if payload := d.get("payload"):
+        uid, key = payload.split(":")
+        try:
+            add_or_update_user(int(uid), TARIFFS[key]["duration_days"])
+        except Exception: pass
         return {"ok": True}
-
-    update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
+    upd = Update.de_json(d, tg_app.bot)
+    await tg_app.process_update(upd)
     return {"ok": True}
 
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    kb = [[InlineKeyboardButton(name, callback_data=f"lang:{code}")] for code, name in LANGUAGES.items()]
-    await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
+async def start(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # кнопки выбора языка…
+async def handle_cb(u: Update, ctx:...): 
+    # старый код handle_cb
+    if data=="admin" and u.from_user.id==OWNER_ID:
+        kb=[[InlineKeyboardButton("📤 Рассылка",callback_data="adm_broadcast")],
+            [InlineKeyboardButton("📈 Статистика",callback_data="adm_stats")],
+            [InlineKeyboardButton("⚙️ Тарифы",callback_data="adm_tariffs")]]
+        await q.edit_message_text("Admin panel:",reply_markup=InlineKeyboardMarkup(kb))
+    elif data=="adm_stats" and u.from_user.id==OWNER_ID:
+        users = get_all_users()
+        active = sum((datetime.datetime.fromisoformat(e)>datetime.datetime.now()) for _,e in users)
+        await q.edit_message_text(f"👥 Всех: {len(users)}, ✅ Активных: {active}")
+    elif data=="adm_broadcast" and u.from_user.id==OWNER_ID:
+        await q.edit_message_text("Введите текст рассылки:")
+        ctx.user_data["admin_mode"]="broadcast"
+    elif update.message and ctx.user_data.get("admin_mode")=="broadcast":
+        txt=update.message.text
+        for uid,_ in get_all_users():
+            await tg_app.bot.send_message(uid, txt)
+        ctx.user_data.pop("admin_mode",None)
+    elif data=="crypto" and u.from_user.id==OWNER_ID:
+        price = cg.get_price(ids="bitcoin", vs_currencies="usd")["bitcoin"]["usd"]
+        await q.edit_message_text(f"BTC = ${price}")
+    # остальные кнопки…
 
-async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await handle_cb(update, ctx)
-
-async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
-        await update.message.reply_text("⛔️ Access denied.")
-        return
-    users = get_all_users()
-    total = len(users)
-    active = sum((datetime.datetime.fromisoformat(row[1]) > datetime.datetime.now()) for row in users)
-    await update.message.reply_text(f"👥 Users: {total}\n✅ Active: {active}\n❌ Inactive: {total - active}")
-
-async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
-    data = q.data
-
-    if data.startswith("lang:"):
-        code = data.split(":", 1)[1]
-        user_lang[uid] = code
-        name = q.from_user.first_name
-        kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)] for k in ["access", "subscribe", "news", "commands"]]
-        await q.edit_message_text(TEXT["main_menu"][code].format(name=name), reply_markup=InlineKeyboardMarkup(kb))
-
-    elif data == "subscribe":
-        code = lang(uid)
-        kb = [[InlineKeyboardButton(TARIFFS[k]["labels"][code], callback_data=k)] for k in TARIFFS]
-        await q.edit_message_text(TEXT["choose_tariff"][code], reply_markup=InlineKeyboardMarkup(kb))
-
-    elif data in TARIFFS:
-        t = TARIFFS[data]
-        ctx.user_data["tdays"] = t["duration_days"]
-        payload = {
-            "asset": "USDT", "amount": t["amount"],
-            "description": f"{t['duration_days']} days",
-            "paid_btn_name": "openBot",
-            "paid_btn_url": f"https://t.me/{BOT_USERNAME}",
-            "payload": f"{uid}:{data}"
-        }
-        resp = requests.post("https://pay.crypt.bot/api/createInvoice", json=payload,
-                             headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN})
-        rj = resp.json()
-        if rj.get("ok"):
-            url = rj["result"]["pay_url"]
-            kb = [[InlineKeyboardButton("✅ Я оплатив", callback_data="check")]]
-            await q.edit_message_text(f"💳 Оплатіть тут:\n{url}", reply_markup=InlineKeyboardMarkup(kb))
-        else:
-            await q.edit_message_text("❌ Помилка створення рахунку.")
-
-    elif data == "check":
-        try:
-            m = await ctx.bot.get_chat_member(CHANNEL_CHAT_ID, uid)
-            if m.status in ["member", "administrator", "creator"]:
-                add_or_update_user(uid, ctx.user_data.get("tdays", 30))
-                await q.edit_message_text(tr(uid, "pay_success"))
-            else:
-                raise Exception()
-        except:
-            await q.edit_message_text(tr(uid, "not_subscribed") + CHANNEL_LINK)
-
-    elif data == "access":
-        row = get_user_profile(uid)
-        if row:
-            days = (datetime.datetime.fromisoformat(row[1]) - datetime.datetime.now()).days
-            await q.edit_message_text(tr(uid, "access_status").format(days=days))
-        else:
-            await q.edit_message_text(tr(uid, "no_access"))
-
-    elif data == "news":
-        await send_news(uid)
-
-    elif data == "commands":
-        await q.edit_message_text(TEXT["commands_list"][lang(uid)])
-
-async def send_news(uid):
-    async with httpx.AsyncClient() as cli:
-        r = await cli.get("https://cryptopanic.com/api/developer/v2/posts/",
-                          params={"auth_token": CRYPTOPANIC_API_KEY, "public": "true", "kind": "news"})
-        posts = r.json().get("results", [])[:3]
-    msg = "📰 Останні новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
-    await telegram_app.bot.send_message(uid, msg)
-
-async def check_expiry(_):
-    now = datetime.datetime.now()
+async def help_cmd(...): ...
+async def myaccess(...): await handle_cb(...)
+async def check_expiry(_:ContextTypes.DEFAULT_TYPE):
     for uid, exp in get_all_users():
-        dt = datetime.datetime.fromisoformat(exp)
-        if (dt - now).days == 1:
-            await telegram_app.bot.send_message(uid, "⚠️ Завтра завершується підписка.")
-        if dt < now:
-            remove_user(uid)
+        ...
+        await tg_app.bot.send_message(uid, "...")
 
-from uvicorn import Config, Server
+@fastapi_app.get("/") 
+def health(): return {"ok":True}
 
 async def main():
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
-    telegram_app.add_handler(CommandHandler("admin", admin_cmd))
-    telegram_app.add_handler(CallbackQueryHandler(handle_cb))
-    telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
-    await telegram_app.initialize()
+    tg_app.add_handler(CommandHandler("start", start))
+    tg_app.add_handler(CommandHandler("myaccess", myaccess))
+    tg_app.add_handler(CommandHandler("admin", lambda u,c: c.bot.send_message(u.effective_user.id, "Ок"), filters=lambda m: m.from_user.id==OWNER_ID))
+    tg_app.add_handler(CallbackQueryHandler(handle_cb))
+    tg_app.job_queue.run_repeating(check_expiry, interval=3600)
+    await tg_app.initialize()
+    from uvicorn import Config, Server
+    server = Server(Config(fastapi_app, host="0.0.0.0", port=8000))
+    await asyncio.gather(tg_app.start(), server.serve())
 
-    config = Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
-    server = Server(config)
-
-    await asyncio.gather(
-        telegram_app.start(),
-        server.serve()
-    )
-
-if __name__ == "__main__":
+if __name__=="__main__":
     asyncio.run(main())

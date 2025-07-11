@@ -4,5 +4,7 @@ requests
 httpx
 fastapi
 uvicorn
+pycoingecko
+
 
 
