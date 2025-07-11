@@ -1,4 +1,4 @@
-# ✅ Повний оновлений bot.py з /predict, GPT, Binance, FastAPI, безкоштовним доступом, адмін-панеллю
+# ✅ Повний оновлений bot.py з /start, /help, /predict, GPT, Binance, FastAPI, безкоштовним доступом, адмін-панеллю
 # ⚙️ Залежності: python-telegram-bot[fast], openai, python-dotenv, httpx, requests, apscheduler
 
 import os
@@ -6,11 +6,10 @@ import asyncio
 import datetime
 import logging
 import requests
-import httpx
 import openai
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     ContextTypes
@@ -23,6 +22,8 @@ from db import add_or_update_user, get_user_profile, get_all_users, remove_user
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+logging.basicConfig(level=logging.INFO)
 
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 fastapi_app = FastAPI()
@@ -44,6 +45,33 @@ async def webhook(request: Request):
     await telegram_app.process_update(update)
     return {"ok": True}
 
+# --- Нові функції /start і /help ---
+
+async def start_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    user_lang.setdefault(uid, "uk")
+    await update.message.reply_text(
+        "Вітаю! Це стартове меню.\nВикористовуйте /help для списку команд."
+    )
+    logging.info(f"/start від користувача {uid}")
+
+async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    text = (
+        "/start — стартове меню\n"
+        "/myaccess — мій доступ\n"
+        "/help — команди\n"
+        "/admin — адмін-панель\n"
+        "/ask — GPT\n"
+        "/testask — тестова команда (адмін)\n"
+        "/price — ціни\n"
+        "/predict — прогноз крипти"
+    )
+    await update.message.reply_text(text)
+    logging.info(f"/help від користувача {uid}")
+
+# --- Існуючі команди ---
+
 async def ask_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid != OWNER_ID and not get_user_profile(uid):
@@ -53,6 +81,7 @@ async def ask_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not q:
         await update.message.reply_text("🤖 Напиши запит після /ask")
         return
+    logging.info(f"/ask від {uid}: {q}")
     res = openai.ChatCompletion.create(model="gpt-4o", messages=[{"role": "user", "content": q}])
     await update.message.reply_text(res.choices[0].message.content[:4000])
 
@@ -78,10 +107,17 @@ async def predict_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     symbol = ctx.args[0].upper()
     try:
         data = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}").json()
-        prompt = f"Монета: {symbol}\nПоточна ціна: {data['lastPrice']}\nЗміна за 24h: {data['priceChangePercent']}%\nОбʼєм: {data['volume']}\nНа основі цих даних спрогнозуй, чи варто купувати або продавати."
+        prompt = (
+            f"Монета: {symbol}\n"
+            f"Поточна ціна: {data['lastPrice']}\n"
+            f"Зміна за 24h: {data['priceChangePercent']}%\n"
+            f"Обʼєм: {data['volume']}\n"
+            f"На основі цих даних спрогнозуй, чи варто купувати або продавати."
+        )
         res = openai.ChatCompletion.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
         await update.message.reply_text(f"📈 Прогноз для {symbol}:\n{res.choices[0].message.content[:4000]}")
-    except:
+    except Exception as e:
+        logging.error(f"Error in /predict: {e}")
         await update.message.reply_text("❌ Помилка отримання даних або прогнозу.")
 
 async def price_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -91,7 +127,7 @@ async def price_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid == OWNER_ID:
-        add_or_update_user(uid, 3650)
+        add_or_update_user(uid, 3650)  # 10 років
     row = get_user_profile(uid)
     if row:
         days = (datetime.datetime.fromisoformat(row[1]) - datetime.datetime.now()).days
@@ -120,6 +156,8 @@ async def check_expiry(_):
 from uvicorn import Config, Server
 
 async def main():
+    telegram_app.add_handler(CommandHandler("start", start_cmd))
+    telegram_app.add_handler(CommandHandler("help", help_cmd))
     telegram_app.add_handler(CommandHandler("ask", ask_cmd))
     telegram_app.add_handler(CommandHandler("testask", testask_cmd))
     telegram_app.add_handler(CommandHandler("predict", predict_cmd))
