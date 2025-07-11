@@ -185,6 +185,24 @@ def start_telegram():
     loop.run_forever()
 
 # 🟢 Старт
+import asyncio
+from uvicorn import Config, Server
+
+async def main():
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
+    telegram_app.add_handler(CallbackQueryHandler(handle_cb))
+    telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
+    await telegram_app.initialize()
+
+    config = Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
+    server = Server(config)
+
+    # Паралельний запуск FastAPI та Telegram
+    await asyncio.gather(
+        telegram_app.start(),
+        server.serve()
+    )
+
 if __name__ == "__main__":
-    threading.Thread(target=start_fastapi).start()
-    threading.Thread(target=start_telegram).start()
+    asyncio.run(main())
