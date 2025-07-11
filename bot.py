@@ -175,10 +175,16 @@ def start_telegram():
     telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
     telegram_app.add_handler(CallbackQueryHandler(handle_cb))
     telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
-    print("✅ Telegram бот запущено")
-    telegram_app.run_polling()
 
-# 🟢 Старт (в самому низу!)
+    print("✅ Telegram бот запущено")
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(telegram_app.initialize())
+    loop.create_task(telegram_app.start())
+    loop.run_forever()
+
+# 🟢 Старт
 if __name__ == "__main__":
     threading.Thread(target=start_fastapi).start()
     threading.Thread(target=start_telegram).start()
