@@ -3,26 +3,32 @@ import datetime
 import logging
 import requests
 import httpx
+import openai
 import uvicorn
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    ContextTypes
+    ContextTypes, MessageHandler, filters
 )
 from config import (
     BOT_TOKEN, BOT_USERNAME, TARIFFS,
     CRYPTO_PAY_TOKEN, CHANNEL_CHAT_ID, CHANNEL_LINK,
-    CRYPTOPANIC_API_KEY, OPENAI_API_KEY
+    CRYPTOPANIC_API_KEY, OWNER_ID
 )
 from db import add_or_update_user, get_user_profile, get_all_users, remove_user
+import os
 
-OWNER_ID = 6800873578
-fastapi_app = FastAPI()
-telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
+# 🔑 API ключ GPT
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 logging.basicConfig(level=logging.INFO)
 
+fastapi_app = FastAPI()
+telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
+
 LANGUAGES = {"uk": "Українська", "ru": "Русский", "en": "English"}
+
 TEXT = {
     "choose_lang": {"uk": "Оберіть мову:", "ru": "Выберите язык:", "en": "Choose your language:"},
     "main_menu": {"uk": "Вітаю, {name}!\nОберіть:", "ru": "Привет, {name}!\nВыберите:", "en": "Welcome, {name}!\nChoose:"},
@@ -30,14 +36,12 @@ TEXT = {
         "access": {"uk": "📊 Мій доступ", "ru": "📊 Мой доступ", "en": "📊 My Access"},
         "subscribe": {"uk": "🔁 Продовжити підписку", "ru": "🔁 Продлить подписку", "en": "🔁 Renew Subscription"},
         "news": {"uk": "📰 Новини", "ru": "📰 Новости", "en": "📰 News"},
-        "rates": {"uk": "📈 Курси", "ru": "📈 Курсы", "en": "📈 Rates"},
-        "gpt": {"uk": "💬 GPT-чат", "ru": "💬 GPT-чат", "en": "💬 GPT Chat"},
         "commands": {"uk": "📌 Команди", "ru": "📌 Команды", "en": "📌 Commands"},
     },
     "commands_list": {
-        "uk": "/start — стартове меню\n/myaccess — мій доступ\n/help — команди\n/admin — адмін-панель",
-        "ru": "/start — главное меню\n/myaccess — мой доступ\n/help — команды\n/admin — админ-панель",
-        "en": "/start — main menu\n/myaccess — my access\n/help — commands\n/admin — admin panel"
+        "uk": "/start — стартове меню\n/myaccess — мій доступ\n/help — команди\n/admin — адмін-панель\n/ask — питання до GPT\n/price BTC — курс BTC",
+        "ru": "/start — главное меню\n/myaccess — мой доступ\n/help — команды\n/admin — админ-панель\n/ask — вопрос к GPT\n/price BTC — курс BTC",
+        "en": "/start — main menu\n/myaccess — my access\n/help — commands\n/admin — admin panel\n/ask — ask GPT\n/price BTC — BTC price"
     },
     "choose_tariff": {"uk": "Оберіть тариф:", "ru": "Выберите тариф:", "en": "Choose tariff:"},
     "pay_success": {"uk": "✅ Доступ активовано!", "ru": "✅ Доступ активирован!", "en": "✅ Access activated!"},
@@ -55,10 +59,13 @@ async def telegram_and_crypto_webhook(request: Request):
     data = await request.json()
     if "payload" in data:
         uid, key = data["payload"].split(":")
-        uid = int(uid)
-        days = TARIFFS[key]["duration_days"]
-        add_or_update_user(uid, days)
-        logging.info(f"✅ Activated {uid} for {days} days")
+        try:
+            uid = int(uid)
+            days = TARIFFS[key]["duration_days"]
+            add_or_update_user(uid, days)
+            logging.info(f"✅ Activated user {uid} for {days} days via webhook.")
+        except Exception as e:
+            logging.error(f"❌ Webhook error: {e}")
         return {"ok": True}
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
@@ -88,7 +95,8 @@ async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = update.message.text
     users = get_all_users()
-    active, inactive = 0, 0
+    active = 0
+    inactive = 0
     now = datetime.datetime.now()
     for _, exp in users:
         dt = datetime.datetime.fromisoformat(exp)
@@ -100,12 +108,14 @@ async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if " " in text:
         q = text.split(" ", 1)[1].strip()
         for u, exp in users:
-            chat = await ctx.bot.get_chat(u)
-            name = f"{chat.first_name or ''} {chat.last_name or ''}".strip()
-            if q.lower() in name.lower() or q == str(u):
-                left = (datetime.datetime.fromisoformat(exp) - now).days
-                msg += f"\n\n🔍 Found: {name}\nID: {u}\n⏳ Days left: {max(0, left)}"
-                break
+            try:
+                chat = await ctx.bot.get_chat(u)
+                name = f"{chat.first_name or ''} {chat.last_name or ''}".strip()
+                if q.lower() in name.lower() or q == str(u):
+                    left = (datetime.datetime.fromisoformat(exp) - now).days
+                    msg += f"\n\n🔍 Found: {name}\nID: {u}\n⏳ Days left: {max(0, left)}"
+                    break
+            except: pass
         else:
             msg += "\n\n🚫 Not found."
     await update.message.reply_text(msg)
@@ -116,17 +126,15 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     data = q.data
     if data.startswith("lang:"):
-        code = data.split(":")[1]
+        code = data.split(":", 1)[1]
         user_lang[uid] = code
         name = q.from_user.first_name
-        kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)] for k in ["access", "subscribe", "news", "rates", "gpt", "commands"]]
+        kb = [[InlineKeyboardButton(TEXT["buttons"][k][code], callback_data=k)] for k in ["access", "subscribe", "news", "commands"]]
         await q.edit_message_text(TEXT["main_menu"][code].format(name=name), reply_markup=InlineKeyboardMarkup(kb))
-
     elif data == "subscribe":
         code = lang(uid)
         kb = [[InlineKeyboardButton(TARIFFS[k]["labels"][code], callback_data=k)] for k in TARIFFS]
         await q.edit_message_text(TEXT["choose_tariff"][code], reply_markup=InlineKeyboardMarkup(kb))
-
     elif data in TARIFFS:
         t = TARIFFS[data]
         ctx.user_data["tdays"] = t["duration_days"]
@@ -137,15 +145,15 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "paid_btn_url": f"https://t.me/{BOT_USERNAME}",
             "payload": f"{uid}:{data}"
         }
-        r = requests.post("https://pay.crypt.bot/api/createInvoice", json=payload,
-                          headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}).json()
-        if r.get("ok"):
-            pay_url = r["result"]["pay_url"]
+        resp = requests.post("https://pay.crypt.bot/api/createInvoice", json=payload,
+                             headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN})
+        rj = resp.json()
+        if rj.get("ok"):
+            url = rj["result"]["pay_url"]
             kb = [[InlineKeyboardButton("✅ Я оплатив", callback_data="check")]]
-            await q.edit_message_text(f"💳 Оплатіть тут:\n{pay_url}", reply_markup=InlineKeyboardMarkup(kb))
+            await q.edit_message_text(f"💳 Оплатіть тут:\n{url}", reply_markup=InlineKeyboardMarkup(kb))
         else:
             await q.edit_message_text("❌ Помилка створення рахунку.")
-
     elif data == "check":
         try:
             m = await ctx.bot.get_chat_member(CHANNEL_CHAT_ID, uid)
@@ -156,7 +164,6 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 raise Exception()
         except:
             await q.edit_message_text(tr(uid, "not_subscribed") + CHANNEL_LINK)
-
     elif data == "access":
         row = get_user_profile(uid)
         if row:
@@ -164,16 +171,8 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(tr(uid, "access_status").format(days=days))
         else:
             await q.edit_message_text(tr(uid, "no_access"))
-
     elif data == "news":
         await send_news(uid)
-
-    elif data == "rates":
-        await send_rates(uid)
-
-    elif data == "gpt":
-        await telegram_app.bot.send_message(uid, "💬 Введіть своє запитання до GPT:")
-
     elif data == "commands":
         await q.edit_message_text(TEXT["commands_list"][lang(uid)])
 
@@ -185,32 +184,39 @@ async def send_news(uid):
     msg = "📰 Останні новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
     await telegram_app.bot.send_message(uid, msg)
 
-async def send_rates(uid):
-    async with httpx.AsyncClient() as cli:
-        r = await cli.get("https://api.binance.com/api/v3/ticker/price")
-        pairs = {i["symbol"]: i["price"] for i in r.json()}
-        btc = pairs.get("BTCUSDT", "N/A")
-        eth = pairs.get("ETHUSDT", "N/A")
-        sol = pairs.get("SOLUSDT", "N/A")
-    msg = f"📈 Курс:\nBTC: {btc}$\nETH: {eth}$\nSOL: {sol}$"
-    await telegram_app.bot.send_message(uid, msg)
-
-@telegram_app.message()
-async def gpt_response(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def ask_gpt(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if not get_user_profile(uid): return
-    prompt = update.message.text.strip()
-    async with httpx.AsyncClient() as cli:
-        r = await cli.post("https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            json={
-                "model": "gpt-4o",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.7
-            })
-        res = r.json()
-        text = res.get("choices", [{}])[0].get("message", {}).get("content", "⚠️ Помилка GPT")
-    await update.message.reply_text(text)
+    row = get_user_profile(uid)
+    if not row:
+        await update.message.reply_text(tr(uid, "no_access"))
+        return
+    prompt = update.message.text.replace("/ask", "").strip()
+    if not prompt:
+        await update.message.reply_text("❓ Введіть запит після /ask ...")
+        return
+    await update.message.reply_text("🤖 Відповідаю...")
+    try:
+        res = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        await update.message.reply_text(res.choices[0].message.content)
+    except Exception as e:
+        await update.message.reply_text(f"❌ GPT Error: {e}")
+
+async def price_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    args = ctx.args
+    if not args:
+        await update.message.reply_text("💱 Приклад: /price BTC")
+        return
+    symbol = args[0].upper()
+    url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT"
+    r = requests.get(url)
+    if r.status_code == 200:
+        price = float(r.json()["price"])
+        await update.message.reply_text(f"{symbol}/USDT: {price:.2f}$")
+    else:
+        await update.message.reply_text("❌ Символ не знайдено.")
 
 async def check_expiry(_):
     now = datetime.datetime.now()
@@ -222,17 +228,25 @@ async def check_expiry(_):
             remove_user(uid)
 
 from uvicorn import Config, Server
+
 async def main():
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("help", help_cmd))
     telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
     telegram_app.add_handler(CommandHandler("admin", admin_cmd))
+    telegram_app.add_handler(CommandHandler("ask", ask_gpt))
+    telegram_app.add_handler(CommandHandler("price", price_cmd))
     telegram_app.add_handler(CallbackQueryHandler(handle_cb))
     telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
     await telegram_app.initialize()
-    config = Config(fastapi_app, host="0.0.0.0", port=8000)
+
+    config = Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
     server = Server(config)
-    await asyncio.gather(telegram_app.start(), server.serve())
+
+    await asyncio.gather(
+        telegram_app.start(),
+        server.serve()
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
