@@ -3,6 +3,7 @@ import datetime
 import logging
 import requests
 import httpx
+import uvicorn
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -18,7 +19,6 @@ from db import add_or_update_user, get_user_profile, get_all_users, remove_user
 
 logging.basicConfig(level=logging.INFO)
 
-# FastAPI для webhook
 fastapi_app = FastAPI()
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -47,35 +47,43 @@ TEXT = {
 }
 
 user_lang = {}
+def lang(user_id): return user_lang.get(user_id, "uk")
+def tr(user_id, key): return TEXT[key][lang(user_id)]
 
-def lang(user_id):
-    return user_lang.get(user_id, "uk")
-
-def tr(user_id, key):
-    return TEXT[key][lang(user_id)]
-
-# ✅ Webhook від CryptoBot
+# ✅ Webhook для Telegram і CryptoBot
 @fastapi_app.post("/webhook")
-async def webhook(request: Request):
+async def telegram_and_crypto_webhook(request: Request):
     data = await request.json()
-    payload = data.get("payload")
-    if payload and ":" in payload:
-        uid, key = payload.split(":")
-        try:
-            uid = int(uid)
-            days = TARIFFS[key]["duration_days"]
-            add_or_update_user(uid, days)
-            logging.info(f"✅ Activated user {uid} for {days} days via webhook.")
-        except Exception as e:
-            logging.error(f"❌ Webhook error: {e}")
+
+    # Webhook від CryptoBot
+    if "payload" in data:
+        payload = data["payload"]
+        if ":" in payload:
+            uid, key = payload.split(":")
+            try:
+                uid = int(uid)
+                days = TARIFFS[key]["duration_days"]
+                add_or_update_user(uid, days)
+                logging.info(f"✅ Activated user {uid} for {days} days via webhook.")
+            except Exception as e:
+                logging.error(f"❌ Webhook error: {e}")
+        return {"ok": True}
+
+    # Webhook від Telegram
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
     return {"ok": True}
 
-# 📌 /start
+# /start
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton(name, callback_data=f"lang:{code}")] for code, name in LANGUAGES.items()]
     await update.message.reply_text(TEXT["choose_lang"]["uk"], reply_markup=InlineKeyboardMarkup(kb))
 
-# 📦 Callback
+# /myaccess (через callback для спільності)
+async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await handle_cb(update, ctx)
+
+# 📦 Callback обробник
 async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -148,11 +156,7 @@ async def send_news(uid):
     msg = "📰 Останні новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
     await telegram_app.bot.send_message(uid, msg)
 
-# /myaccess
-async def myaccess_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await handle_cb(update, ctx)
-
-# ⏰ Перевірка доступу
+# ⏰ Перевірка закінчення підписки
 async def check_expiry(_):
     now = datetime.datetime.now()
     for uid, exp in get_all_users():
@@ -162,7 +166,7 @@ async def check_expiry(_):
         if dt < now:
             remove_user(uid)
 
-# 🟢 Старт Telegram + FastAPI
+# 🚀 Головна точка входу
 from uvicorn import Config, Server
 
 async def main():
@@ -170,13 +174,11 @@ async def main():
     telegram_app.add_handler(CommandHandler("myaccess", myaccess_cmd))
     telegram_app.add_handler(CallbackQueryHandler(handle_cb))
     telegram_app.job_queue.run_repeating(check_expiry, interval=3600)
-
     await telegram_app.initialize()
 
     config = Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
     server = Server(config)
 
-    logging.info("✅ Telegram бот запущено")
     await asyncio.gather(
         telegram_app.start(),
         server.serve()
