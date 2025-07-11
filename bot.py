@@ -184,4 +184,4 @@ def start_fastapi():
 
 if __name__ == "__main__":
     threading.Thread(target=start_fastapi).start()
-    asyncio.run(run_telegram())
+    threading.Thread(target=start_telegram).start()
