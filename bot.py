@@ -16,22 +16,36 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from aiogram.client.default import DefaultBotProperties
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from openai import OpenAI
 import stripe
 import uvicorn
 
-import config  # імпорт config.py
+from dotenv import load_dotenv
 
-# ================= Ініціалізація =================
-stripe.api_key = config.STRIPE_API_KEY
-client = OpenAI(api_key=config.OPENAI_API_KEY)
+# ================= LOAD ENV =================
+load_dotenv()
 
-bot = Bot(config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_USERNAME = os.getenv("BOT_USERNAME")
+OWNER_ID = int(os.getenv("OWNER_ID"))
+CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN")
+CHANNEL_CHAT_ID = int(os.getenv("CHANNEL_CHAT_ID"))
+CHANNEL_LINK = os.getenv("CHANNEL_LINK")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
+CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY")
+STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
+
+stripe.api_key = STRIPE_API_KEY
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 fastapi_app = FastAPI()
 scheduler = AsyncIOScheduler()
 
-# ================= База даних =================
+# ================= DB =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 c = conn.cursor()
 c.execute("""
@@ -85,7 +99,7 @@ class GPTState(StatesGroup):
 class WeatherState(StatesGroup):
     waiting = State()
 
-# ================= Клавіатура =================
+# ================= KEYBOARD =================
 def main_kb():
     kb = [
         [InlineKeyboardButton("📊 Доступ", callback_data="access"),
@@ -97,41 +111,24 @@ def main_kb():
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# ================= Команди =================
+# ================= COMMANDS =================
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     uid = msg.from_user.id
-    args = msg.get_args()
-
-    if args == "success":
-        add_or_update_user(uid, days=30)
-        await msg.answer("Дякуємо за оплату! Підписка активована на 30 днів.", reply_markup=main_kb())
-        return
-
     if not get_user(uid):
-        add_or_update_user(uid, 1)  # 1 день безкоштовно
+        add_or_update_user(uid, 1)
     await msg.answer(f"Вітаю, {msg.from_user.first_name}!", reply_markup=main_kb())
 
 @dp.message(Command("help"))
 async def help_cmd(msg: types.Message):
-    await msg.answer("/start — почати\n/help — допомога\n/admin — продовжити підписку (адмін)")
+    await msg.answer("/start — почати\n/help — допомога\n")
 
-@dp.message(Command("admin"))
-async def admin_extend_subscription(msg: types.Message):
-    uid = msg.from_user.id
-    if uid != config.OWNER_ID:
-        await msg.answer("⛔ У вас немає прав адміністратора.")
-        return
-
-    add_or_update_user(uid, days=30)  # продовжує на 30 днів
-    await msg.answer("✅ Підписка продовжена на 30 днів.")
-
-# ================= Callback-и =================
+# ================= CALLBACKS =================
 @dp.callback_query(lambda c: c.data == "access")
 async def cb_access(cb: types.CallbackQuery):
     uid = cb.from_user.id
     row = get_user(uid)
-    if uid == config.OWNER_ID:
+    if uid == OWNER_ID:
         await cb.message.answer("👑 Безліміт (адмін).")
     elif row:
         left = (datetime.datetime.fromisoformat(row[2]) - datetime.datetime.now()).days
@@ -151,13 +148,13 @@ async def cb_pay(cb: types.CallbackQuery):
             "price_data": {
                 "currency": "usd",
                 "product_data": {"name": "Підписка"},
-                "unit_amount": 500
+                "unit_amount": 599  # cents
             },
             "quantity": 1
         }],
         mode="payment",
-        success_url=f"https://t.me/{config.BOT_USERNAME}?start=success",
-        cancel_url=f"https://t.me/{config.BOT_USERNAME}?start=cancel"
+        success_url=f"https://t.me/{BOT_USERNAME}?start=success",
+        cancel_url=f"https://t.me/{BOT_USERNAME}?start=cancel"
     )
     await cb.message.answer(f"Оплатіть тут: {session.url}")
     await cb.answer()
@@ -199,7 +196,7 @@ async def cb_weather(cb: types.CallbackQuery, state: FSMContext):
 @dp.message(WeatherState.waiting)
 async def weather_reply(msg: types.Message, state: FSMContext):
     city = msg.text
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={config.OPENWEATHER_API_KEY}&units=metric&lang=ua"
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric&lang=ua"
     r = requests.get(url).json()
     if r.get("cod") != 200:
         await msg.answer("Місто не знайдено.")
@@ -212,7 +209,7 @@ async def weather_reply(msg: types.Message, state: FSMContext):
 @dp.callback_query(lambda c: c.data == "news")
 async def cb_news(cb: types.CallbackQuery):
     async with httpx.AsyncClient() as cli:
-        r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={config.CRYPTOPANIC_API_KEY}")
+        r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={CRYPTOPANIC_API_KEY}")
         posts = r.json().get("results", [])[:5]
         text = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
         await cb.message.answer("📰 Останні новини:\n" + text)
@@ -229,23 +226,32 @@ async def cb_prices(cb: types.CallbackQuery):
 # ================= FASTAPI WEBHOOK =================
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
-    body = await request.json()
-    if "payload" in body:
-        uid, days = body["payload"].split(":")
-        add_or_update_user(int(uid), int(days))
+    try:
+        body = await request.json()
+
+        if "payload" in body:
+            uid, days = body["payload"].split(":")
+            add_or_update_user(int(uid), int(days))
+            return {"ok": True, "detail": "User updated"}
+
+        update = Update(**body)
+        await dp.feed_update(bot, update)
         return {"ok": True}
 
-    update = Update(**body)
-    await dp.feed_update(bot, update)
-    return {"ok": True}
+    except Exception as e:
+        logging.exception("Webhook error")
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "detail": str(e)}
+        )
 
 # ================= AUTOTASK =================
 async def auto_news():
     async with httpx.AsyncClient() as cli:
-        r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={config.CRYPTOPANIC_API_KEY}")
+        r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={CRYPTOPANIC_API_KEY}")
         posts = r.json().get("results", [])[:3]
         text = "📰 Новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
-        await bot.send_message(config.CHANNEL_CHAT_ID, text)
+        await bot.send_message(CHANNEL_CHAT_ID, text)
 
 # ================= RUN =================
 def run():
