@@ -219,27 +219,28 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(tr(uid, "no_access"))
 
     elif data == "subscribe":
-        kb = [[InlineKeyboardButton(TARIFFS[k]["labels"][code], callback_data=f"tariff:{k}")] for k in TARIFFS]
-        kb.append([InlineKeyboardButton(TEXT["buttons"]["back"][code], callback_data="back_to_main")])
-        await q.edit_message_text(tr(uid, "choose_tariff"), reply_markup=InlineKeyboardMarkup(kb))
+    kb = [[InlineKeyboardButton(TARIFFS[k]["labels"][code], callback_data=f"tariff:{k}")] for k in TARIFFS]
+    kb.append([InlineKeyboardButton(TEXT["buttons"]["back"][code], callback_data="back_to_main")])
+    await q.edit_message_text(tr(uid, "choose_tariff"), reply_markup=InlineKeyboardMarkup(kb))
 
-       elif data.startswith("tariff:"):
-        tariff_key = data.split(":")[1]
-        t = TARIFFS[tariff_key]
-        resp = requests.post("https://pay.crypt.bot/api/createInvoice", json={
-            "asset": "USDT", "amount": t["amount"],
-            "description": f"{t['duration_days']} days",
-            "paid_btn_name": "openBot",
-            "paid_btn_url": f"https://t.me/{BOT_USERNAME}",
-            "payload": f"{uid}:{tariff_key}"
-        }, headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN})
-        rj = resp.json()
-        if rj.get("ok"):
-            url = rj["result"]["pay_url"]
-            kb = [
-                [InlineKeyboardButton("✅ Я оплатив", callback_data="check_payment")],
-                [InlineKeyboardButton(TEXT["buttons"]["back"][lang(uid)], callback_data="back_to_main")]
-            ]
+elif data.startswith("tariff:"):
+    tariff_key = data.split(":")[1]
+    t = TARIFFS[tariff_key]
+    resp = requests.post("https://pay.crypt.bot/api/createInvoice", json={
+        "asset": "USDT", "amount": t["amount"],
+        "description": f"{t['duration_days']} days",
+        "paid_btn_name": "openBot",
+        "paid_btn_url": f"https://t.me/{BOT_USERNAME}",
+        "payload": f"{uid}:{tariff_key}"
+    }, headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN})
+    rj = resp.json()
+    if rj.get("ok"):
+        url = rj["result"]["pay_url"]
+        kb = [
+            [InlineKeyboardButton("✅ Я оплатив", callback_data="check_payment")],
+            [InlineKeyboardButton(TEXT["buttons"]["back"][lang(uid)], callback_data="back_to_main")]
+        ]
+
             await q.edit_message_text(f"💳 Оплатіть тут:\n{url}", reply_markup=InlineKeyboardMarkup(kb))
         else:
             await q.edit_message_text("❌ Помилка створення рахунку.")
