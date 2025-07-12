@@ -16,7 +16,6 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from aiogram.client.default import DefaultBotProperties
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
@@ -25,6 +24,14 @@ import stripe
 
 import uvicorn
 from dotenv import load_dotenv
+
+import aiogram.types  # Додано для перепризначення клавіатурних класів
+
+# Повторне призначення, щоб уникнути TypeError
+InlineKeyboardButton = aiogram.types.InlineKeyboardButton
+InlineKeyboardMarkup = aiogram.types.InlineKeyboardMarkup
+Update = aiogram.types.Update
+
 
 # ================= LOAD ENV =================
 load_dotenv()
@@ -267,8 +274,8 @@ async def cb_news(cb: types.CallbackQuery):
         posts = r.json().get("results", [])[:5]
         # Для прикладу виведемо на трьох мовах — тут просто дублюємо текст:
         text_ua = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
-        text_ru = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))  # Можна перекладати або інші API
-        text_en = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
+        text_ru = text_ua  # Можна замінити на реальний переклад
+        text_en = text_ua
         await cb.message.answer("📰 Останні новини (UA):\n" + text_ua)
         await cb.message.answer("📰 Последние новости (RU):\n" + text_ru)
         await cb.message.answer("📰 Latest news (EN):\n" + text_en)
@@ -276,7 +283,7 @@ async def cb_news(cb: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data == "prices")
 async def cb_prices(cb: types.CallbackQuery):
-    r = requests.get("https://api.binance.com/api/v3/ticker/price?symbols=[\"BTCUSDT\",\"ETHUSDT\"]")
+    r = requests.get('https://api.binance.com/api/v3/ticker/price?symbols=["BTCUSDT","ETHUSDT"]')
     prices = r.json()
     msg = "\n".join(f"{d['symbol']}: {d['price']}" for d in prices)
     await cb.message.answer("💱 Поточні курси:\n" + msg)
