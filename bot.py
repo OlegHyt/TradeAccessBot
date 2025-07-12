@@ -1,29 +1,24 @@
 import os
-import asyncio
 import datetime
-import logging
 import sqlite3
+import logging
 import requests
 import httpx
-
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.filters import Command  # Text видалено через помилки
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from aiogram.client.bot import DefaultBotProperties
-
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
 from openai import OpenAI
 import stripe
 import uvicorn
-
 from dotenv import load_dotenv
 
-# =============== LOAD ENV ===============
+# ==================== LOAD ENV ====================
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -40,13 +35,12 @@ STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
 stripe.api_key = STRIPE_API_KEY
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Відповідно до aiogram 3.7+ формат ініціалізації з parse_mode:
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot = Bot(BOT_TOKEN, default=types.DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 fastapi_app = FastAPI()
 scheduler = AsyncIOScheduler()
 
-# =============== DB ===============
+# ==================== DB ====================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 c = conn.cursor()
 c.execute("""
@@ -90,14 +84,14 @@ def reset_usage():
     c.execute("UPDATE users SET usage = 0")
     conn.commit()
 
-# =============== FSM ===============
+# ==================== FSM ====================
 class GPTState(StatesGroup):
     waiting = State()
 
 class WeatherState(StatesGroup):
     waiting = State()
 
-# =============== KEYBOARD ===============
+# ==================== KEYBOARD ====================
 def main_kb():
     kb = [
         [InlineKeyboardButton("📊 Доступ", callback_data="access"),
@@ -109,19 +103,19 @@ def main_kb():
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# =============== COMMANDS ===============
+# ==================== COMMANDS ====================
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     uid = msg.from_user.id
     if not get_user(uid):
-        add_or_update_user(uid, 1)  # Безкоштовна година
+        add_or_update_user(uid, 1)
     await msg.answer(f"Вітаю, {msg.from_user.first_name}!", reply_markup=main_kb())
 
 @dp.message(Command("help"))
 async def help_cmd(msg: types.Message):
     await msg.answer("/start — почати\n/help — допомога\n")
 
-# =============== CALLBACKS ===============
+# ==================== CALLBACKS ====================
 @dp.callback_query(lambda c: c.data == "access")
 async def cb_access(cb: types.CallbackQuery):
     uid = cb.from_user.id
@@ -218,7 +212,7 @@ async def cb_prices(cb: types.CallbackQuery):
     await cb.message.answer("💱 Поточні курси:\n" + msg)
     await cb.answer()
 
-# =============== FASTAPI Webhook ===============
+# ==================== FASTAPI WEBHOOK ====================
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
     body = await request.json()
@@ -231,7 +225,7 @@ async def webhook(request: Request):
     await dp.feed_update(bot, update)
     return {"ok": True}
 
-# =============== AUTOTASK ===============
+# ==================== AUTOTASK ====================
 async def auto_news():
     async with httpx.AsyncClient() as cli:
         r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={CRYPTOPANIC_API_KEY}")
@@ -239,16 +233,13 @@ async def auto_news():
         text = "📰 Новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
         await bot.send_message(CHANNEL_CHAT_ID, text)
 
-# =============== RUN ===============
+# ==================== RUN ====================
 def run():
     scheduler.add_job(auto_news, "interval", hours=1)
     scheduler.add_job(reset_usage, "cron", hour=0)
     scheduler.start()
-    # НЕ викликаємо dp.start_polling(), webhook сам все обробляє
+    uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    import threading
-    # Запускаємо FastAPI сервер у окремому потоці
-    threading.Thread(target=lambda: uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)).start()
     run()
