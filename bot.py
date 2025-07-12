@@ -5,16 +5,16 @@ import logging
 import sqlite3
 import requests
 import httpx
-from io import BytesIO
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.filters import Command  # Text видалено
+from aiogram.filters import Command  # Text видалено через помилки
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from aiogram.client.bot import DefaultBotProperties
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
 from openai import OpenAI
@@ -40,10 +40,8 @@ STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
 stripe.api_key = STRIPE_API_KEY
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-bot = Bot(
-    BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
+# Відповідно до aiogram 3.7+ формат ініціалізації з parse_mode:
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 fastapi_app = FastAPI()
 scheduler = AsyncIOScheduler()
@@ -246,10 +244,11 @@ def run():
     scheduler.add_job(auto_news, "interval", hours=1)
     scheduler.add_job(reset_usage, "cron", hour=0)
     scheduler.start()
-    asyncio.run(dp.start_polling(bot))
+    # НЕ викликаємо dp.start_polling(), webhook сам все обробляє
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     import threading
+    # Запускаємо FastAPI сервер у окремому потоці
     threading.Thread(target=lambda: uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)).start()
     run()
