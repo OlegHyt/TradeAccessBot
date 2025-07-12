@@ -9,7 +9,7 @@ from io import BytesIO
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, Text
+from aiogram.filters import Command  # Text видалено
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
@@ -121,7 +121,7 @@ async def help_cmd(msg: types.Message):
     await msg.answer("/start — почати\n/help — допомога\n")
 
 # =============== CALLBACKS ===============
-@dp.callback_query(Text("access"))
+@dp.callback_query(lambda c: c.data == "access")
 async def cb_access(cb: types.CallbackQuery):
     uid = cb.from_user.id
     row = get_user(uid)
@@ -134,7 +134,7 @@ async def cb_access(cb: types.CallbackQuery):
         await cb.message.answer("❌ Підписка неактивна.")
     await cb.answer()
 
-@dp.callback_query(Text("pay"))
+@dp.callback_query(lambda c: c.data == "pay")
 async def cb_pay(cb: types.CallbackQuery):
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
@@ -153,7 +153,7 @@ async def cb_pay(cb: types.CallbackQuery):
     await cb.message.answer(f"Оплатіть тут: {session.url}")
     await cb.answer()
 
-@dp.callback_query(Text("gpt"))
+@dp.callback_query(lambda c: c.data == "gpt")
 async def cb_gpt(cb: types.CallbackQuery, state: FSMContext):
     uid = cb.from_user.id
     if not can_use_gpt(uid):
@@ -181,7 +181,7 @@ async def gpt_reply(msg: types.Message, state: FSMContext):
             logging.error(e)
     await state.clear()
 
-@dp.callback_query(Text("weather"))
+@dp.callback_query(lambda c: c.data == "weather")
 async def cb_weather(cb: types.CallbackQuery, state: FSMContext):
     await cb.message.answer("Введіть місто:")
     await state.set_state(WeatherState.waiting)
@@ -200,7 +200,7 @@ async def weather_reply(msg: types.Message, state: FSMContext):
         await msg.answer(f"Погода: {w}\n🌡 Температура: {t}°C")
     await state.clear()
 
-@dp.callback_query(Text("news"))
+@dp.callback_query(lambda c: c.data == "news")
 async def cb_news(cb: types.CallbackQuery):
     async with httpx.AsyncClient() as cli:
         r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={CRYPTOPANIC_API_KEY}")
@@ -209,7 +209,7 @@ async def cb_news(cb: types.CallbackQuery):
         await cb.message.answer("📰 Останні новини:\n" + text)
     await cb.answer()
 
-@dp.callback_query(Text("prices"))
+@dp.callback_query(lambda c: c.data == "prices")
 async def cb_prices(cb: types.CallbackQuery):
     r = requests.get("https://api.binance.com/api/v3/ticker/price?symbols=[\"BTCUSDT\",\"ETHUSDT\"]")
     prices = r.json()
