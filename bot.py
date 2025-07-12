@@ -25,13 +25,7 @@ import stripe
 import uvicorn
 from dotenv import load_dotenv
 
-import aiogram.types  # Додано для перепризначення клавіатурних класів
-
-# Повторне призначення, щоб уникнути TypeError
-InlineKeyboardButton = aiogram.types.InlineKeyboardButton
-InlineKeyboardMarkup = aiogram.types.InlineKeyboardMarkup
-Update = aiogram.types.Update
-
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
 
 # ================= LOAD ENV =================
 load_dotenv()
@@ -39,9 +33,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 OWNER_ID = int(os.getenv("OWNER_ID"))
-CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN")
 CHANNEL_CHAT_ID = int(os.getenv("CHANNEL_CHAT_ID"))
-CHANNEL_LINK = os.getenv("CHANNEL_LINK")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY")
@@ -119,12 +111,12 @@ class WeatherState(StatesGroup):
 # ================= KEYBOARDS =================
 def main_kb():
     kb = [
-        [InlineKeyboardButton("📊 Доступ", callback_data="access"),
-         InlineKeyboardButton("💳 Оплата", callback_data="pay")],
-        [InlineKeyboardButton("🧠 GPT", callback_data="gpt"),
-         InlineKeyboardButton("☀️ Погода", callback_data="weather")],
-        [InlineKeyboardButton("📰 Новини", callback_data="news"),
-         InlineKeyboardButton("💱 Ціни", callback_data="prices")]
+        [InlineKeyboardButton(text="📊 Доступ", callback_data="access"),
+         InlineKeyboardButton(text="💳 Оплата", callback_data="pay")],
+        [InlineKeyboardButton(text="🧠 GPT", callback_data="gpt"),
+         InlineKeyboardButton(text="☀️ Погода", callback_data="weather")],
+        [InlineKeyboardButton(text="📰 Новини", callback_data="news"),
+         InlineKeyboardButton(text="💱 Ціни", callback_data="prices")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
@@ -148,7 +140,6 @@ async def start(msg: types.Message):
     if not get_user(uid):
         add_or_update_user(uid, 1)
     await msg.answer(f"Вітаю, {msg.from_user.first_name}!", reply_markup=main_kb())
-    # Якщо прийшов параметр start=success чи cancel, можна додати логіку
 
 @dp.message(Command("help"))
 async def help_cmd(msg: types.Message):
@@ -184,7 +175,7 @@ async def cb_pay_30d(cb: types.CallbackQuery):
             "price_data": {
                 "currency": "usd",
                 "product_data": {"name": "Підписка 30 днів"},
-                "unit_amount": 599,  # 5.99 USD у центах
+                "unit_amount": 599,
             },
             "quantity": 1,
         }],
@@ -203,7 +194,7 @@ async def cb_pay_365d(cb: types.CallbackQuery):
             "price_data": {
                 "currency": "usd",
                 "product_data": {"name": "Підписка 365 днів"},
-                "unit_amount": 3999,  # 39.99 USD у центах
+                "unit_amount": 3999,
             },
             "quantity": 1,
         }],
@@ -272,27 +263,14 @@ async def cb_news(cb: types.CallbackQuery):
     async with httpx.AsyncClient() as cli:
         r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={CRYPTOPANIC_API_KEY}")
         posts = r.json().get("results", [])[:5]
-        # Для прикладу виведемо на трьох мовах — тут просто дублюємо текст:
         text_ua = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
-        text_ru = text_ua  # Можна замінити на реальний переклад
-        text_en = text_ua
-        await cb.message.answer("📰 Останні новини (UA):\n" + text_ua)
-        await cb.message.answer("📰 Последние новости (RU):\n" + text_ru)
-        await cb.message.answer("📰 Latest news (EN):\n" + text_en)
+        await cb.message.answer("📰 Останні новини:\n" + text_ua)
     await cb.answer()
 
-@dp.callback_query(lambda c: c.data == "prices")
-async def cb_prices(cb: types.CallbackQuery):
-    r = requests.get('https://api.binance.com/api/v3/ticker/price?symbols=["BTCUSDT","ETHUSDT"]')
-    prices = r.json()
-    msg = "\n".join(f"{d['symbol']}: {d['price']}" for d in prices)
-    await cb.message.answer("💱 Поточні курси:\n" + msg)
-    await cb.answer()
-
-# ================= НОВЕ АВТОЗАВДАННЯ =================
+# ================= AUTOTASK =================
 async def send_candlestick_and_forecast():
     symbols = ["BTCUSDT", "ETHUSDT"]
-    interval = "1d"  # добовий інтервал
+    interval = "1d"
 
     async with httpx.AsyncClient() as client:
         for symbol in symbols:
@@ -300,7 +278,6 @@ async def send_candlestick_and_forecast():
             resp = await client.get(url)
             data = resp.json()
 
-            # Формуємо DataFrame
             df = pd.DataFrame(data, columns=[
                 "Open time", "Open", "High", "Low", "Close", "Volume",
                 "Close time", "Quote asset volume", "Number of trades",
@@ -311,11 +288,9 @@ async def send_candlestick_and_forecast():
             for col in ["Open", "High", "Low", "Close", "Volume"]:
                 df[col] = df[col].astype(float)
 
-            # Малюємо свічковий графік
             fig, axlist = mpf.plot(df.iloc[-30:], type='candle', style='charles',
                                    title=f"{symbol} - 30d Candlestick", returnfig=True)
 
-            # Прогноз на основі простих ковзних середніх
             sma_short = df["Close"].rolling(window=5).mean().iloc[-1]
             sma_long = df["Close"].rolling(window=20).mean().iloc[-1]
             last_close = df["Close"].iloc[-1]
@@ -327,14 +302,19 @@ async def send_candlestick_and_forecast():
             else:
                 forecast = "⚖️ Тренд нейтральний — варто утриматись."
 
-            # Зберігаємо графік в буфер
             buf = io.BytesIO()
             fig.savefig(buf, format='png')
             buf.seek(0)
             plt.close(fig)
 
-            # Відправляємо у канал
             await bot.send_photo(CHANNEL_CHAT_ID, photo=buf, caption=forecast)
+
+async def auto_news():
+    async with httpx.AsyncClient() as cli:
+        r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={CRYPTOPANIC_API_KEY}")
+        posts = r.json().get("results", [])[:3]
+        text = "📰 Новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
+        await bot.send_message(CHANNEL_CHAT_ID, text)
 
 # ================= FASTAPI WEBHOOK =================
 @fastapi_app.post("/webhook")
@@ -349,21 +329,18 @@ async def webhook(request: Request):
     await dp.feed_update(bot, update)
     return {"ok": True}
 
-# ================= AUTOTASK =================
-async def auto_news():
-    async with httpx.AsyncClient() as cli:
-        r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={CRYPTOPANIC_API_KEY}")
-        posts = r.json().get("results", [])[:3]
-        text = "📰 Новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
-        await bot.send_message(CHANNEL_CHAT_ID, text)
-
 # ================= RUN =================
 def run():
     scheduler.add_job(auto_news, "interval", hours=1)
     scheduler.add_job(reset_usage, "cron", hour=0)
-    scheduler.add_job(send_candlestick_and_forecast, "cron", hour=9)  # щоденно о 9 ранку
+    scheduler.add_job(send_candlestick_and_forecast, "cron", hour=9)
     scheduler.start()
+
+    # Якщо тільки FastAPI + Webhook:
     uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
+
+    # Якщо хочеш запускати Long Polling:
+    # asyncio.run(dp.start_polling(bot))
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
