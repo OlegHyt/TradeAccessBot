@@ -17,7 +17,6 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
 from openai import OpenAI
-import matplotlib.pyplot as plt
 import stripe
 import uvicorn
 
