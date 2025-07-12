@@ -18,7 +18,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
 from openai import OpenAI
 import stripe
-
 import uvicorn
 from dotenv import load_dotenv
 
@@ -101,12 +100,18 @@ class WeatherState(StatesGroup):
 # ================= KEYBOARD =================
 def main_kb():
     kb = [
-        [InlineKeyboardButton("📊 Доступ", callback_data="access"),
-         InlineKeyboardButton("💳 Оплата", callback_data="pay")],
-        [InlineKeyboardButton("🧠 GPT", callback_data="gpt"),
-         InlineKeyboardButton("☀️ Погода", callback_data="weather")],
-        [InlineKeyboardButton("📰 Новини", callback_data="news"),
-         InlineKeyboardButton("💱 Ціни", callback_data="prices")]
+        [
+            InlineKeyboardButton(text="📊 Доступ", callback_data="access"),
+            InlineKeyboardButton(text="💳 Оплата", callback_data="pay")
+        ],
+        [
+            InlineKeyboardButton(text="🧠 GPT", callback_data="gpt"),
+            InlineKeyboardButton(text="☀️ Погода", callback_data="weather")
+        ],
+        [
+            InlineKeyboardButton(text="📰 Новини", callback_data="news"),
+            InlineKeyboardButton(text="💱 Ціни", callback_data="prices")
+        ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
@@ -115,13 +120,13 @@ def main_kb():
 async def start(msg: types.Message):
     uid = msg.from_user.id
 
-    # Aiogram v3: парсимо аргументи вручну
+    # Аргументи вручну — щоб не було get_args()
     parts = msg.text.split(maxsplit=1)
     args = parts[1] if len(parts) > 1 else ""
 
     if args == "success":
         add_or_update_user(uid, 30)
-        await msg.answer("✅ Оплата успішна, підписка продовжена!", reply_markup=main_kb())
+        await msg.answer("✅ Оплата успішна! Підписка продовжена.", reply_markup=main_kb())
     elif args == "cancel":
         await msg.answer("❌ Оплата скасована.")
     else:
@@ -158,7 +163,7 @@ async def cb_pay(cb: types.CallbackQuery):
             "price_data": {
                 "currency": "usd",
                 "product_data": {"name": "Підписка"},
-                "unit_amount": 599,
+                "unit_amount": 500
             },
             "quantity": 1
         }],
@@ -237,11 +242,6 @@ async def cb_prices(cb: types.CallbackQuery):
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
     body = await request.json()
-    if "payload" in body:
-        uid, days = body["payload"].split(":")
-        add_or_update_user(int(uid), int(days))
-        return {"ok": True}
-
     update = Update(**body)
     await dp.feed_update(bot, update)
     return {"ok": True}
