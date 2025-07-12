@@ -1,19 +1,20 @@
-# Ігноруємо .env, щоб токени не потрапили у публічний репозиторій
+# Ігнорування конфіденційних змінних середовища
 .env
 
-# Byte-compiled / cache files
+# Python bytecode
 __pycache__/
 *.py[cod]
 *$py.class
 
-# VS Code settings
+# VS Code налаштування
 .vscode/
 
-# Virtual environments
+# Віртуальні оточення
 venv/
 env/
 ENV/
 
-# OS-specific
+# Системні файли
 .DS_Store
 Thumbs.db
+
