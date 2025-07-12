@@ -5,6 +5,10 @@ import logging
 import sqlite3
 import requests
 import httpx
+import io
+import matplotlib.pyplot as plt
+import mplfinance as mpf
+import pandas as pd
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
@@ -105,9 +109,6 @@ class GPTState(StatesGroup):
 class WeatherState(StatesGroup):
     waiting = State()
 
-class NewsLangState(StatesGroup):
-    waiting = State()
-
 # ================= KEYBOARDS =================
 def main_kb():
     kb = [
@@ -132,33 +133,15 @@ def payment_kb():
     ])
     return kb
 
-def news_lang_kb():
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Українська 🇺🇦", callback_data="news_lang_uk"),
-            InlineKeyboardButton(text="Русский 🇷🇺", callback_data="news_lang_ru"),
-            InlineKeyboardButton(text="English 🇬🇧", callback_data="news_lang_en"),
-        ],
-        [
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")
-        ]
-    ])
-    return kb
-
-# ================= TRANSLATIONS =================
-news_headers = {
-    "uk": "📰 Останні новини:",
-    "ru": "📰 Последние новости:",
-    "en": "📰 Latest news:"
-}
-
 # ================= COMMANDS =================
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     uid = msg.from_user.id
+    args = msg.get_args() if hasattr(msg, "get_args") else ""
     if not get_user(uid):
         add_or_update_user(uid, 1)
     await msg.answer(f"Вітаю, {msg.from_user.first_name}!", reply_markup=main_kb())
+    # Якщо прийшов параметр start=success чи cancel, можна додати логіку
 
 @dp.message(Command("help"))
 async def help_cmd(msg: types.Message):
@@ -277,28 +260,19 @@ async def weather_reply(msg: types.Message, state: FSMContext):
         await msg.answer(f"Погода: {w}\n🌡 Температура: {t}°C")
     await state.clear()
 
-# Новини - вибір мови
 @dp.callback_query(lambda c: c.data == "news")
-async def cb_news_start(cb: types.CallbackQuery, state: FSMContext):
-    await cb.message.answer("Оберіть мову новин:", reply_markup=news_lang_kb())
-    await state.set_state(NewsLangState.waiting)
-    await cb.answer()
-
-@dp.callback_query(lambda c: c.data.startswith("news_lang_"))
-async def cb_news_lang(cb: types.CallbackQuery, state: FSMContext):
-    lang = cb.data.split("_")[-1]
-    await state.update_data(news_lang=lang)
-    await cb.answer(f"Обрана мова: {lang}")
-    
-    # Отримати новини
+async def cb_news(cb: types.CallbackQuery):
     async with httpx.AsyncClient() as cli:
         r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={CRYPTOPANIC_API_KEY}")
         posts = r.json().get("results", [])[:5]
-
-    header = news_headers.get(lang, news_headers["en"])
-    text = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
-    await cb.message.answer(header + "\n" + text, reply_markup=main_kb())
-    await state.clear()
+        # Для прикладу виведемо на трьох мовах — тут просто дублюємо текст:
+        text_ua = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
+        text_ru = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))  # Можна перекладати або інші API
+        text_en = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
+        await cb.message.answer("📰 Останні новини (UA):\n" + text_ua)
+        await cb.message.answer("📰 Последние новости (RU):\n" + text_ru)
+        await cb.message.answer("📰 Latest news (EN):\n" + text_en)
+    await cb.answer()
 
 @dp.callback_query(lambda c: c.data == "prices")
 async def cb_prices(cb: types.CallbackQuery):
@@ -307,6 +281,53 @@ async def cb_prices(cb: types.CallbackQuery):
     msg = "\n".join(f"{d['symbol']}: {d['price']}" for d in prices)
     await cb.message.answer("💱 Поточні курси:\n" + msg)
     await cb.answer()
+
+# ================= НОВЕ АВТОЗАВДАННЯ =================
+async def send_candlestick_and_forecast():
+    symbols = ["BTCUSDT", "ETHUSDT"]
+    interval = "1d"  # добовий інтервал
+
+    async with httpx.AsyncClient() as client:
+        for symbol in symbols:
+            url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=30"
+            resp = await client.get(url)
+            data = resp.json()
+
+            # Формуємо DataFrame
+            df = pd.DataFrame(data, columns=[
+                "Open time", "Open", "High", "Low", "Close", "Volume",
+                "Close time", "Quote asset volume", "Number of trades",
+                "Taker buy base asset volume", "Taker buy quote asset volume", "Ignore"
+            ])
+            df["Open time"] = pd.to_datetime(df["Open time"], unit='ms')
+            df.set_index("Open time", inplace=True)
+            for col in ["Open", "High", "Low", "Close", "Volume"]:
+                df[col] = df[col].astype(float)
+
+            # Малюємо свічковий графік
+            fig, axlist = mpf.plot(df.iloc[-30:], type='candle', style='charles',
+                                   title=f"{symbol} - 30d Candlestick", returnfig=True)
+
+            # Прогноз на основі простих ковзних середніх
+            sma_short = df["Close"].rolling(window=5).mean().iloc[-1]
+            sma_long = df["Close"].rolling(window=20).mean().iloc[-1]
+            last_close = df["Close"].iloc[-1]
+
+            if sma_short > sma_long and last_close > sma_short:
+                forecast = "📈 Тренд зростає — потенційний сигнал купівлі."
+            elif sma_short < sma_long and last_close < sma_short:
+                forecast = "📉 Тренд падає — потенційний сигнал продажу."
+            else:
+                forecast = "⚖️ Тренд нейтральний — варто утриматись."
+
+            # Зберігаємо графік в буфер
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png')
+            buf.seek(0)
+            plt.close(fig)
+
+            # Відправляємо у канал
+            await bot.send_photo(CHANNEL_CHAT_ID, photo=buf, caption=forecast)
 
 # ================= FASTAPI WEBHOOK =================
 @fastapi_app.post("/webhook")
@@ -333,6 +354,7 @@ async def auto_news():
 def run():
     scheduler.add_job(auto_news, "interval", hours=1)
     scheduler.add_job(reset_usage, "cron", hour=0)
+    scheduler.add_job(send_candlestick_and_forecast, "cron", hour=9)  # щоденно о 9 ранку
     scheduler.start()
     uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
 
