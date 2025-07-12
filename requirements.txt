@@ -8,6 +8,8 @@ pycoingecko
 openai
 nest_asyncio
 aiogram
+stripe
+
 
 
 
