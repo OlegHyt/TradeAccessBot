@@ -16,11 +16,10 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from aiogram.client.default import DefaultBotProperties
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from openai import OpenAI
 import stripe
-import uvicorn
 
+import uvicorn
 from dotenv import load_dotenv
 
 # ================= LOAD ENV =================
@@ -115,9 +114,20 @@ def main_kb():
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     uid = msg.from_user.id
-    if not get_user(uid):
-        add_or_update_user(uid, 1)
-    await msg.answer(f"Вітаю, {msg.from_user.first_name}!", reply_markup=main_kb())
+
+    # Aiogram v3: парсимо аргументи вручну
+    parts = msg.text.split(maxsplit=1)
+    args = parts[1] if len(parts) > 1 else ""
+
+    if args == "success":
+        add_or_update_user(uid, 30)
+        await msg.answer("✅ Оплата успішна, підписка продовжена!", reply_markup=main_kb())
+    elif args == "cancel":
+        await msg.answer("❌ Оплата скасована.")
+    else:
+        if not get_user(uid):
+            add_or_update_user(uid, 1)
+        await msg.answer(f"Вітаю, {msg.from_user.first_name}!", reply_markup=main_kb())
 
 @dp.message(Command("help"))
 async def help_cmd(msg: types.Message):
@@ -148,7 +158,7 @@ async def cb_pay(cb: types.CallbackQuery):
             "price_data": {
                 "currency": "usd",
                 "product_data": {"name": "Підписка"},
-                "unit_amount": 599  # cents
+                "unit_amount": 599,
             },
             "quantity": 1
         }],
@@ -226,24 +236,15 @@ async def cb_prices(cb: types.CallbackQuery):
 # ================= FASTAPI WEBHOOK =================
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
-    try:
-        body = await request.json()
-
-        if "payload" in body:
-            uid, days = body["payload"].split(":")
-            add_or_update_user(int(uid), int(days))
-            return {"ok": True, "detail": "User updated"}
-
-        update = Update(**body)
-        await dp.feed_update(bot, update)
+    body = await request.json()
+    if "payload" in body:
+        uid, days = body["payload"].split(":")
+        add_or_update_user(int(uid), int(days))
         return {"ok": True}
 
-    except Exception as e:
-        logging.exception("Webhook error")
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "detail": str(e)}
-        )
+    update = Update(**body)
+    await dp.feed_update(bot, update)
+    return {"ok": True}
 
 # ================= AUTOTASK =================
 async def auto_news():
