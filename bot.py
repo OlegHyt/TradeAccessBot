@@ -18,6 +18,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
 from openai import OpenAI
 import stripe
+
 import uvicorn
 from dotenv import load_dotenv
 
@@ -66,8 +67,8 @@ def add_or_update_user(uid, days=30):
     now = datetime.datetime.now()
     new_expiry = now + datetime.timedelta(days=days)
     c.execute(
-        "INSERT OR REPLACE INTO users (id, usage, expires) VALUES (?, ?, ?)",
-        (uid, 0, new_expiry.isoformat())
+        "INSERT OR REPLACE INTO users (id, usage, expires) VALUES (?, COALESCE((SELECT usage FROM users WHERE id=?), 0), ?)",
+        (uid, uid, new_expiry.isoformat())
     )
     conn.commit()
 
@@ -82,9 +83,16 @@ def log_gpt(uid, prompt):
     conn.commit()
 
 def can_use_gpt(uid):
-    c.execute("SELECT usage FROM users WHERE id=?", (uid,))
+    c.execute("SELECT usage, expires FROM users WHERE id=?", (uid,))
     row = c.fetchone()
-    return row and row[0] < 5
+    if not row:
+        return False
+    usage, expires = row
+    if expires:
+        expiry_date = datetime.datetime.fromisoformat(expires)
+        if expiry_date < datetime.datetime.now():
+            return False
+    return usage < 5
 
 def reset_usage():
     c.execute("UPDATE users SET usage = 0")
@@ -97,42 +105,39 @@ class GPTState(StatesGroup):
 class WeatherState(StatesGroup):
     waiting = State()
 
-# ================= KEYBOARD =================
+# ================= KEYBOARDS =================
 def main_kb():
     kb = [
-        [
-            InlineKeyboardButton(text="📊 Доступ", callback_data="access"),
-            InlineKeyboardButton(text="💳 Оплата", callback_data="pay")
-        ],
-        [
-            InlineKeyboardButton(text="🧠 GPT", callback_data="gpt"),
-            InlineKeyboardButton(text="☀️ Погода", callback_data="weather")
-        ],
-        [
-            InlineKeyboardButton(text="📰 Новини", callback_data="news"),
-            InlineKeyboardButton(text="💱 Ціни", callback_data="prices")
-        ]
+        [InlineKeyboardButton("📊 Доступ", callback_data="access"),
+         InlineKeyboardButton("💳 Оплата", callback_data="pay")],
+        [InlineKeyboardButton("🧠 GPT", callback_data="gpt"),
+         InlineKeyboardButton("☀️ Погода", callback_data="weather")],
+        [InlineKeyboardButton("📰 Новини", callback_data="news"),
+         InlineKeyboardButton("💱 Ціни", callback_data="prices")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def payment_kb():
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="💳 5.99 USDT / 30 днів", callback_data="pay_30d"),
+            InlineKeyboardButton(text="💎 39.99 USDT / 365 днів", callback_data="pay_365d"),
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")
+        ]
+    ])
+    return kb
 
 # ================= COMMANDS =================
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     uid = msg.from_user.id
-
-    # Аргументи вручну — щоб не було get_args()
-    parts = msg.text.split(maxsplit=1)
-    args = parts[1] if len(parts) > 1 else ""
-
-    if args == "success":
-        add_or_update_user(uid, 30)
-        await msg.answer("✅ Оплата успішна! Підписка продовжена.", reply_markup=main_kb())
-    elif args == "cancel":
-        await msg.answer("❌ Оплата скасована.")
-    else:
-        if not get_user(uid):
-            add_or_update_user(uid, 1)
-        await msg.answer(f"Вітаю, {msg.from_user.first_name}!", reply_markup=main_kb())
+    args = msg.get_args() if hasattr(msg, "get_args") else ""
+    if not get_user(uid):
+        add_or_update_user(uid, 1)
+    await msg.answer(f"Вітаю, {msg.from_user.first_name}!", reply_markup=main_kb())
+    # Якщо прийшов параметр start=success чи cancel, можна додати логіку
 
 @dp.message(Command("help"))
 async def help_cmd(msg: types.Message):
@@ -156,22 +161,51 @@ async def cb_access(cb: types.CallbackQuery):
     await cb.answer()
 
 @dp.callback_query(lambda c: c.data == "pay")
-async def cb_pay(cb: types.CallbackQuery):
+async def cb_pay_menu(cb: types.CallbackQuery):
+    await cb.message.answer("Оберіть тариф для оплати:", reply_markup=payment_kb())
+    await cb.answer()
+
+@dp.callback_query(lambda c: c.data == "pay_30d")
+async def cb_pay_30d(cb: types.CallbackQuery):
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
         line_items=[{
             "price_data": {
                 "currency": "usd",
-                "product_data": {"name": "Підписка"},
-                "unit_amount": 500
+                "product_data": {"name": "Підписка 30 днів"},
+                "unit_amount": 599,  # 5.99 USD у центах
             },
-            "quantity": 1
+            "quantity": 1,
         }],
         mode="payment",
         success_url=f"https://t.me/{BOT_USERNAME}?start=success",
-        cancel_url=f"https://t.me/{BOT_USERNAME}?start=cancel"
+        cancel_url=f"https://t.me/{BOT_USERNAME}?start=cancel",
     )
     await cb.message.answer(f"Оплатіть тут: {session.url}")
+    await cb.answer()
+
+@dp.callback_query(lambda c: c.data == "pay_365d")
+async def cb_pay_365d(cb: types.CallbackQuery):
+    session = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "product_data": {"name": "Підписка 365 днів"},
+                "unit_amount": 3999,  # 39.99 USD у центах
+            },
+            "quantity": 1,
+        }],
+        mode="payment",
+        success_url=f"https://t.me/{BOT_USERNAME}?start=success",
+        cancel_url=f"https://t.me/{BOT_USERNAME}?start=cancel",
+    )
+    await cb.message.answer(f"Оплатіть тут: {session.url}")
+    await cb.answer()
+
+@dp.callback_query(lambda c: c.data == "back_to_main")
+async def cb_back(cb: types.CallbackQuery):
+    await cb.message.answer("Головне меню:", reply_markup=main_kb())
     await cb.answer()
 
 @dp.callback_query(lambda c: c.data == "gpt")
@@ -179,6 +213,7 @@ async def cb_gpt(cb: types.CallbackQuery, state: FSMContext):
     uid = cb.from_user.id
     if not can_use_gpt(uid):
         await cb.message.answer("⚠️ Вичерпано 5 запитів сьогодні.")
+        await cb.answer()
         return
     await cb.message.answer("Введіть запит для GPT:")
     await state.set_state(GPTState.waiting)
@@ -242,6 +277,11 @@ async def cb_prices(cb: types.CallbackQuery):
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
     body = await request.json()
+    if "payload" in body:
+        uid, days = body["payload"].split(":")
+        add_or_update_user(int(uid), int(days))
+        return {"ok": True}
+
     update = Update(**body)
     await dp.feed_update(bot, update)
     return {"ok": True}
