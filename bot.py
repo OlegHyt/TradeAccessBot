@@ -223,27 +223,39 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         kb.append([InlineKeyboardButton(TEXT["buttons"]["back"][code], callback_data="back_to_main")])
         await q.edit_message_text(tr(uid, "choose_tariff"), reply_markup=InlineKeyboardMarkup(kb))
 
-    elif data.startswith("tariff:"):
-    tariff_key = data.split(":")[1]
-    t = TARIFFS[tariff_key]
-    resp = requests.post("https://pay.crypt.bot/api/createInvoice", json={
-        "asset": "USDT", "amount": t["amount"],
-        "description": f"{t['duration_days']} days",
-        "paid_btn_name": "openBot",
-        "paid_btn_url": f"https://t.me/{BOT_USERNAME}",
-        "payload": f"{uid}:{tariff_key}"
-    }, headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN})
+       elif data.startswith("tariff:"):
+        tariff_key = data.split(":")[1]
+        t = TARIFFS[tariff_key]
+        resp = requests.post("https://pay.crypt.bot/api/createInvoice", json={
+            "asset": "USDT", "amount": t["amount"],
+            "description": f"{t['duration_days']} days",
+            "paid_btn_name": "openBot",
+            "paid_btn_url": f"https://t.me/{BOT_USERNAME}",
+            "payload": f"{uid}:{tariff_key}"
+        }, headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN})
+        rj = resp.json()
+        if rj.get("ok"):
+            url = rj["result"]["pay_url"]
+            kb = [
+                [InlineKeyboardButton("✅ Я оплатив", callback_data="check_payment")],
+                [InlineKeyboardButton(TEXT["buttons"]["back"][lang(uid)], callback_data="back_to_main")]
+            ]
+            await q.edit_message_text(f"💳 Оплатіть тут:\n{url}", reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            await q.edit_message_text("❌ Помилка створення рахунку.")
 
-    rj = resp.json()
-    if rj.get("ok"):
-        url = rj["result"]["pay_url"]
-        kb = [
-            [InlineKeyboardButton("✅ Я оплатив", callback_data="check_payment")],
-            [InlineKeyboardButton(TEXT["buttons"]["back"][lang(uid)], callback_data="back_to_main")]
-        ]
-        await q.edit_message_text(f"💳 Оплатіть тут:\n{url}", reply_markup=InlineKeyboardMarkup(kb))
-    else:
-        await q.edit_message_text("❌ Помилка створення рахунку.")
+    elif data == "check_payment":
+        try:
+            # Перевіряємо чи користувач є учасником каналу
+            m = await ctx.bot.get_chat_member(CHANNEL_CHAT_ID, uid)
+            if m.status in ["member", "administrator", "creator"]:
+                # Продовжуємо підписку
+                add_or_update_user(uid, TARIFFS["month"]["duration_days"])  # або зберегти тариф з user_data
+                await q.edit_message_text(tr(uid, "pay_success"))
+            else:
+                raise Exception()
+        except Exception:
+            await q.edit_message_text(tr(uid, "not_subscribed") + CHANNEL_LINK)
 
 elif data == "check_payment":
     try:
