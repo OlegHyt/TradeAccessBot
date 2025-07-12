@@ -9,7 +9,8 @@ from io import BytesIO
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, Text
+from aiogram.filters import Command
+from aiogram.filters.text import Text  # Ось тут виправлено
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
