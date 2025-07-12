@@ -16,9 +16,10 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.default import DefaultBotProperties
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 import stripe
-from fastapi import FastAPI, Request
 import uvicorn
 from openai import OpenAI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -317,6 +318,27 @@ async def cb_prices(cb: types.CallbackQuery):
         eth = eth_r.json().get("price")
         await cb.message.answer(f"💱 BTC/USDT: {btc}\n💱 ETH/USDT: {eth}")
     await cb.answer()
+
+# === WEBHOOK FOR TELEGRAM AND CRYPTO PAY ===
+@fastapi_app.post("/webhook")
+async def telegram_webhook(request: Request):
+    data = await request.json()
+
+    # Якщо це повідомлення від Crypto Pay (платіж)
+    if "payload" in data:
+        try:
+            uid_str, days_str = data["payload"].split(":")
+            uid, days = int(uid_str), int(days_str)
+            add_or_update_user(uid, days)
+            return JSONResponse(content={"ok": True})
+        except Exception as e:
+            logging.error(f"Crypto Pay webhook error: {e}")
+            return JSONResponse(content={"ok": False}, status_code=400)
+
+    # Інакше це оновлення від Telegram
+    update = Update(**data)
+    await dp.feed_update(bot, update)
+    return JSONResponse(content={"ok": True})
 
 # === RUN ===
 def run():
