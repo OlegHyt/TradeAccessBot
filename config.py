@@ -1,5 +1,3 @@
-# config.py
-
 import os
 from dotenv import load_dotenv
 
@@ -23,6 +21,9 @@ CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY")
 
 # 🤖 GPT-4o (OpenAI API)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# 💳 Stripe API Key
+STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
 
 # 💸 Тарифи з локалізацією назв
 TARIFFS = {
