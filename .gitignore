@@ -1,20 +1,11 @@
-# Ігнорування конфіденційних змінних середовища
+# .gitignore
 .env
-
-# Python bytecode
 __pycache__/
 *.py[cod]
 *$py.class
-
-# VS Code налаштування
 .vscode/
-
-# Віртуальні оточення
 venv/
 env/
 ENV/
-
-# Системні файли
 .DS_Store
 Thumbs.db
-

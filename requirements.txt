@@ -1,19 +1,13 @@
-python-telegram-bot[job-queue]==20.6
-python-dotenv
-requests
-httpx
+# requirements.txt
+aiogram
 fastapi
 uvicorn[standard]
-pycoingecko
-openai
-nest_asyncio
-aiogram
+python-dotenv
+httpx
 stripe
+openai
+apscheduler
 matplotlib
-mplfinance
 pandas
-
-
-
-
-
+mplfinance
+pycoingecko
