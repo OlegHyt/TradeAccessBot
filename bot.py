@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from aiogram.client.bot import DefaultBotProperties
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
 from openai import OpenAI
@@ -39,7 +40,10 @@ STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
 stripe.api_key = STRIPE_API_KEY
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-bot = Bot(BOT_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(
+    BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher(storage=MemoryStorage())
 fastapi_app = FastAPI()
 scheduler = AsyncIOScheduler()
