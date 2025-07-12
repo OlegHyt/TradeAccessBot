@@ -3,12 +3,15 @@ python-dotenv
 requests
 httpx
 fastapi
-uvicorn
+uvicorn[standard]
 pycoingecko
 openai
 nest_asyncio
 aiogram
 stripe
+matplotlib
+mplfinance
+pandas
 
 
 
