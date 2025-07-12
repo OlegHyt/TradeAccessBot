@@ -5,10 +5,7 @@ import logging
 import sqlite3
 import requests
 import httpx
-import io
-import matplotlib.pyplot as plt
-import mplfinance as mpf
-import pandas as pd
+from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
@@ -17,17 +14,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.default import DefaultBotProperties
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, Request
-from openai import OpenAI
-import stripe
-
-import uvicorn
-from dotenv import load_dotenv
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
 
-# ================= LOAD ENV =================
+import stripe
+from fastapi import FastAPI, Request
+import uvicorn
+from openai import OpenAI
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+# === LOAD ENV ===
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -47,14 +43,15 @@ dp = Dispatcher(storage=MemoryStorage())
 fastapi_app = FastAPI()
 scheduler = AsyncIOScheduler()
 
-# ================= DB =================
+# === DB ===
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 c = conn.cursor()
 c.execute("""
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     usage INTEGER DEFAULT 0,
-    expires TEXT
+    expires TEXT,
+    lang TEXT DEFAULT 'ua'
 )
 """)
 c.execute("""
@@ -70,8 +67,8 @@ def add_or_update_user(uid, days=30):
     now = datetime.datetime.now()
     new_expiry = now + datetime.timedelta(days=days)
     c.execute(
-        "INSERT OR REPLACE INTO users (id, usage, expires) VALUES (?, COALESCE((SELECT usage FROM users WHERE id=?), 0), ?)",
-        (uid, uid, new_expiry.isoformat())
+        "INSERT OR REPLACE INTO users (id, usage, expires, lang) VALUES (?, COALESCE((SELECT usage FROM users WHERE id=?), 0), ?, COALESCE((SELECT lang FROM users WHERE id=?), 'ua'))",
+        (uid, uid, new_expiry.isoformat(), uid)
     )
     conn.commit()
 
@@ -90,7 +87,7 @@ def can_use_gpt(uid):
     row = c.fetchone()
     if not row:
         return False
-    usage, expires = row
+    usage, expires = row[1], row[2]
     if expires:
         expiry_date = datetime.datetime.fromisoformat(expires)
         if expiry_date < datetime.datetime.now():
@@ -101,14 +98,18 @@ def reset_usage():
     c.execute("UPDATE users SET usage = 0")
     conn.commit()
 
-# ================= FSM =================
+def update_user_lang(uid, lang):
+    c.execute("UPDATE users SET lang=? WHERE id=?", (lang, uid))
+    conn.commit()
+
+# === FSM ===
 class GPTState(StatesGroup):
     waiting = State()
 
 class WeatherState(StatesGroup):
     waiting = State()
 
-# ================= KEYBOARDS =================
+# === KEYBOARDS ===
 def main_kb():
     kb = [
         [InlineKeyboardButton(text="📊 Доступ", callback_data="access"),
@@ -116,7 +117,8 @@ def main_kb():
         [InlineKeyboardButton(text="🧠 GPT", callback_data="gpt"),
          InlineKeyboardButton(text="☀️ Погода", callback_data="weather")],
         [InlineKeyboardButton(text="📰 Новини", callback_data="news"),
-         InlineKeyboardButton(text="💱 Ціни", callback_data="prices")]
+         InlineKeyboardButton(text="💱 Ціни", callback_data="prices")],
+        [InlineKeyboardButton(text="🌐 Мова", callback_data="lang")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
@@ -132,11 +134,23 @@ def payment_kb():
     ])
     return kb
 
-# ================= COMMANDS =================
+def lang_kb():
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang_ua"),
+            InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en"),
+            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru"),
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")
+        ]
+    ])
+    return kb
+
+# === COMMANDS ===
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     uid = msg.from_user.id
-    args = msg.get_args() if hasattr(msg, "get_args") else ""
     if not get_user(uid):
         add_or_update_user(uid, 1)
     await msg.answer(f"Вітаю, {msg.from_user.first_name}!", reply_markup=main_kb())
@@ -145,7 +159,7 @@ async def start(msg: types.Message):
 async def help_cmd(msg: types.Message):
     await msg.answer("/start — почати\n/help — допомога\n")
 
-# ================= CALLBACKS =================
+# === CALLBACKS ===
 @dp.callback_query(lambda c: c.data == "access")
 async def cb_access(cb: types.CallbackQuery):
     uid = cb.from_user.id
@@ -205,6 +219,19 @@ async def cb_pay_365d(cb: types.CallbackQuery):
     await cb.message.answer(f"Оплатіть тут: {session.url}")
     await cb.answer()
 
+@dp.callback_query(lambda c: c.data == "lang")
+async def cb_lang(cb: types.CallbackQuery):
+    await cb.message.answer("Оберіть мову:", reply_markup=lang_kb())
+    await cb.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("lang_"))
+async def cb_set_lang(cb: types.CallbackQuery):
+    uid = cb.from_user.id
+    lang = cb.data.split("_")[1]
+    update_user_lang(uid, lang)
+    await cb.message.answer(f"✅ Мову встановлено: {lang.upper()}", reply_markup=main_kb())
+    await cb.answer()
+
 @dp.callback_query(lambda c: c.data == "back_to_main")
 async def cb_back(cb: types.CallbackQuery):
     await cb.message.answer("Головне меню:", reply_markup=main_kb())
@@ -260,87 +287,42 @@ async def weather_reply(msg: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data == "news")
 async def cb_news(cb: types.CallbackQuery):
+    uid = cb.from_user.id
+    user = get_user(uid)
+    lang = user[3] if user else "ua"
+
     async with httpx.AsyncClient() as cli:
         r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={CRYPTOPANIC_API_KEY}")
         posts = r.json().get("results", [])[:5]
-        text_ua = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
-        await cb.message.answer("📰 Останні новини:\n" + text_ua)
+
+        text = "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
+
+        if lang == "ua":
+            prefix = "📰 Останні новини (UA):"
+        elif lang == "ru":
+            prefix = "📰 Последние новости (RU):"
+        else:
+            prefix = "📰 Latest news (EN):"
+
+        await cb.message.answer(f"{prefix}\n{text}")
+
     await cb.answer()
 
-# ================= AUTOTASK =================
-async def send_candlestick_and_forecast():
-    symbols = ["BTCUSDT", "ETHUSDT"]
-    interval = "1d"
-
-    async with httpx.AsyncClient() as client:
-        for symbol in symbols:
-            url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=30"
-            resp = await client.get(url)
-            data = resp.json()
-
-            df = pd.DataFrame(data, columns=[
-                "Open time", "Open", "High", "Low", "Close", "Volume",
-                "Close time", "Quote asset volume", "Number of trades",
-                "Taker buy base asset volume", "Taker buy quote asset volume", "Ignore"
-            ])
-            df["Open time"] = pd.to_datetime(df["Open time"], unit='ms')
-            df.set_index("Open time", inplace=True)
-            for col in ["Open", "High", "Low", "Close", "Volume"]:
-                df[col] = df[col].astype(float)
-
-            fig, axlist = mpf.plot(df.iloc[-30:], type='candle', style='charles',
-                                   title=f"{symbol} - 30d Candlestick", returnfig=True)
-
-            sma_short = df["Close"].rolling(window=5).mean().iloc[-1]
-            sma_long = df["Close"].rolling(window=20).mean().iloc[-1]
-            last_close = df["Close"].iloc[-1]
-
-            if sma_short > sma_long and last_close > sma_short:
-                forecast = "📈 Тренд зростає — потенційний сигнал купівлі."
-            elif sma_short < sma_long and last_close < sma_short:
-                forecast = "📉 Тренд падає — потенційний сигнал продажу."
-            else:
-                forecast = "⚖️ Тренд нейтральний — варто утриматись."
-
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png')
-            buf.seek(0)
-            plt.close(fig)
-
-            await bot.send_photo(CHANNEL_CHAT_ID, photo=buf, caption=forecast)
-
-async def auto_news():
+@dp.callback_query(lambda c: c.data == "prices")
+async def cb_prices(cb: types.CallbackQuery):
     async with httpx.AsyncClient() as cli:
-        r = await cli.get(f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={CRYPTOPANIC_API_KEY}")
-        posts = r.json().get("results", [])[:3]
-        text = "📰 Новини:\n" + "\n".join(f"{i+1}. {p['title']}" for i, p in enumerate(posts))
-        await bot.send_message(CHANNEL_CHAT_ID, text)
+        btc_r = await cli.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+        eth_r = await cli.get("https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT")
+        btc = btc_r.json().get("price")
+        eth = eth_r.json().get("price")
+        await cb.message.answer(f"💱 BTC/USDT: {btc}\n💱 ETH/USDT: {eth}")
+    await cb.answer()
 
-# ================= FASTAPI WEBHOOK =================
-@fastapi_app.post("/webhook")
-async def webhook(request: Request):
-    body = await request.json()
-    if "payload" in body:
-        uid, days = body["payload"].split(":")
-        add_or_update_user(int(uid), int(days))
-        return {"ok": True}
-
-    update = Update(**body)
-    await dp.feed_update(bot, update)
-    return {"ok": True}
-
-# ================= RUN =================
+# === RUN ===
 def run():
-    scheduler.add_job(auto_news, "interval", hours=1)
     scheduler.add_job(reset_usage, "cron", hour=0)
-    scheduler.add_job(send_candlestick_and_forecast, "cron", hour=9)
     scheduler.start()
-
-    # Якщо тільки FastAPI + Webhook:
     uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
-
-    # Якщо хочеш запускати Long Polling:
-    # asyncio.run(dp.start_polling(bot))
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
