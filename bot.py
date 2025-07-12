@@ -66,9 +66,11 @@ conn.commit()
 def add_or_update_user(uid, days=30):
     now = datetime.datetime.now()
     new_expiry = now + datetime.timedelta(days=days)
+    # Якщо користувач існує, оновлюємо дату закінчення без скидання usage
     c.execute(
-        "INSERT OR REPLACE INTO users (id, usage, expires) VALUES (?, COALESCE((SELECT usage FROM users WHERE id=?), 0), ?)",
-        (uid, uid, new_expiry.isoformat())
+        "INSERT INTO users (id, usage, expires) VALUES (?, 0, ?) "
+        "ON CONFLICT(id) DO UPDATE SET expires=excluded.expires",
+        (uid, new_expiry.isoformat())
     )
     conn.commit()
 
@@ -107,15 +109,21 @@ class WeatherState(StatesGroup):
 
 # ================= KEYBOARDS =================
 def main_kb():
-    kb = [
-        [InlineKeyboardButton("📊 Доступ", callback_data="access"),
-         InlineKeyboardButton("💳 Оплата", callback_data="pay")],
-        [InlineKeyboardButton("🧠 GPT", callback_data="gpt"),
-         InlineKeyboardButton("☀️ Погода", callback_data="weather")],
-        [InlineKeyboardButton("📰 Новини", callback_data="news"),
-         InlineKeyboardButton("💱 Ціни", callback_data="prices")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=kb)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📊 Доступ", callback_data="access"),
+            InlineKeyboardButton(text="💳 Оплата", callback_data="pay"),
+        ],
+        [
+            InlineKeyboardButton(text="🧠 GPT", callback_data="gpt"),
+            InlineKeyboardButton(text="☀️ Погода", callback_data="weather"),
+        ],
+        [
+            InlineKeyboardButton(text="📰 Новини", callback_data="news"),
+            InlineKeyboardButton(text="💱 Ціни", callback_data="prices"),
+        ]
+    ])
+    return kb
 
 def payment_kb():
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -137,7 +145,7 @@ async def start(msg: types.Message):
     if not get_user(uid):
         add_or_update_user(uid, 1)
     await msg.answer(f"Вітаю, {msg.from_user.first_name}!", reply_markup=main_kb())
-    # Якщо прийшов параметр start=success чи cancel, можна додати логіку
+    # Обробка параметрів у args можна додати тут, якщо потрібно
 
 @dp.message(Command("help"))
 async def help_cmd(msg: types.Message):
