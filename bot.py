@@ -242,17 +242,23 @@ async def handle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             await q.edit_message_text("❌ Помилка створення рахунку.")
 
-    elif data == "check_payment":
+            elif data == "check_payment":
         try:
-            # Перевіряємо чи користувач є учасником каналу (для прикладу)
+            # Перевіряємо чи користувач є учасником каналу
             m = await ctx.bot.get_chat_member(CHANNEL_CHAT_ID, uid)
             if m.status in ["member", "administrator", "creator"]:
                 # Продовжуємо підписку
-                add_or_update_user(uid, TARIFFS["month"]["duration_days"])  # або можна зберегти тариф з user_data
+                add_or_update_user(uid, TARIFFS["month"]["duration_days"])  # або зберегти тариф з user_data
                 await q.edit_message_text(tr(uid, "pay_success"))
             else:
                 raise Exception()
-        import logging
+        except Exception:
+            await q.edit_message_text(tr(uid, "not_subscribed") + CHANNEL_LINK)
+
+    else:
+        await q.edit_message_text("❌ Помилка створення рахунку.")
+
+import logging
 import sqlite3
 import datetime
 import requests
